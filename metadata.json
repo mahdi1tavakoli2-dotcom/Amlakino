@@ -1,0 +1,7 @@
+{
+  "name": "AMLAKINO - املاکینو",
+  "description": "سامانه ابری و همراه مدیریت املاک، مشتریان و معاملات (CRM) برای مشاوران و آژانس‌های املاک در ایران",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
