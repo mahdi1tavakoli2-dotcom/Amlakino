@@ -24,8 +24,6 @@ export const mockUsers: User[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
     isActive: true,
     licenseCode: 'A-4482',
-    passwordHash: 'e6c276404fb9457fb54315cee407b40d00e5ebfb', // 123456
-    salt: 'salt_101',
     createdAt: '1403/01/15',
   },
   {
@@ -38,8 +36,6 @@ export const mockUsers: User[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
     isActive: true,
     licenseCode: 'A-7719',
-    passwordHash: 'e6c276404fb9457fb54315cee407b40d00e5ebfb',
-    salt: 'salt_102',
     createdAt: '1403/02/10',
   },
   {
@@ -52,8 +48,6 @@ export const mockUsers: User[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
     isActive: true,
     licenseCode: 'M-1100',
-    passwordHash: 'e6c276404fb9457fb54315cee407b40d00e5ebfb',
-    salt: 'salt_mgr',
     createdAt: '1402/08/10',
   },
   {
@@ -66,8 +60,6 @@ export const mockUsers: User[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
     isActive: true,
     licenseCode: 'A-9921',
-    passwordHash: 'e6c276404fb9457fb54315cee407b40d00e5ebfb',
-    salt: 'salt_103',
     createdAt: '1403/03/15',
   },
   {
@@ -80,8 +72,6 @@ export const mockUsers: User[] = [
     avatarUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&auto=format&fit=crop&q=80',
     isActive: true,
     licenseCode: 'IND-302',
-    passwordHash: 'e6c276404fb9457fb54315cee407b40d00e5ebfb',
-    salt: 'salt_104',
     createdAt: '1403/04/01',
     agentMode: 'independent',
     subscriptionStatus: 'active',

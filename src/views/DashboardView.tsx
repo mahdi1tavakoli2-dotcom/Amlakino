@@ -37,6 +37,7 @@ import { Badge } from '../components/common/Badge';
 import { Card } from '../components/common/Card';
 import { LoadingState } from '../components/common/LoadingState';
 import { useToast } from '../components/common/Toast';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 export const DashboardView: React.FC = () => {
   const { user, team, switchDemoUser } = useAuth();
@@ -121,14 +122,14 @@ export const DashboardView: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-12 max-w-7xl mx-auto">
-      {/* Quick Role Tester Bar */}
+      {/* Auth Session & Security Bar */}
       <div className="bg-slate-900 text-white p-3 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-3 shadow-md">
         <div className="flex items-center gap-2.5">
           <div className="w-7 h-7 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-xs">
             RBAC
           </div>
           <div>
-            <span className="text-xs text-slate-400 block">کاربر فعال فعلی در سامانه:</span>
+            <span className="text-xs text-slate-400 block">کاربر فعال احراز هویت شده:</span>
             <span className="text-xs sm:text-sm font-bold text-emerald-300">
               {user?.fullName} ({user?.role === 'manager' ? 'مدیر دپارتمان' : 'مشاور املاک'})
             </span>
@@ -136,40 +137,38 @@ export const DashboardView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-[11px] text-slate-400">تغییر نقش برای تست:</span>
-          <button
-            type="button"
-            onClick={() => handleQuickSwitch('usr_101', 'مشاور مهدی رضایی')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              user?.id === 'usr_101'
-                ? 'bg-emerald-500 text-slate-950 shadow-xs'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            مشاور ۱ (مهدی رضایی)
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQuickSwitch('usr_mgr_1', 'مدیر علیرضا تهرانی')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              user?.id === 'usr_mgr_1'
-                ? 'bg-blue-500 text-slate-950 shadow-xs'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            مدیر دپارتمان (علیرضا تهرانی)
-          </button>
-          <button
-            type="button"
-            onClick={() => handleQuickSwitch('usr_102', 'مشاور سارا امینی')}
-            className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-              user?.id === 'usr_102'
-                ? 'bg-purple-500 text-slate-950 shadow-xs'
-                : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-            }`}
-          >
-            مشاور ۲ (سارا امینی)
-          </button>
+          {isSupabaseConfigured() ? (
+            <div className="flex items-center gap-1.5 px-3 py-1 bg-emerald-950/80 border border-emerald-500/40 rounded-lg text-emerald-400 text-xs font-semibold">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>نشست امن Supabase Auth</span>
+            </div>
+          ) : (
+            <>
+              <span className="text-[11px] text-slate-400">تغییر نقش تست:</span>
+              <button
+                type="button"
+                onClick={() => handleQuickSwitch('usr_101', 'مشاور مهدی رضایی')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  user?.id === 'usr_101'
+                    ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                مشاور ۱
+              </button>
+              <button
+                type="button"
+                onClick={() => handleQuickSwitch('usr_mgr_1', 'مدیر علیرضا تهرانی')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  user?.id === 'usr_mgr_1'
+                    ? 'bg-blue-500 text-slate-950 shadow-xs'
+                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                }`}
+              >
+                مدیر
+              </button>
+            </>
+          )}
           <button
             type="button"
             onClick={() => navigate('/security-tests')}

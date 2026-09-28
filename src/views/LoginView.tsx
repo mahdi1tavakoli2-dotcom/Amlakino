@@ -6,6 +6,8 @@ import { Input } from '../components/common/Input';
 import { Button } from '../components/common/Button';
 import { Card } from '../components/common/Card';
 import { useToast } from '../components/common/Toast';
+import { otpService } from '../services/otpService';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 export const LoginView: React.FC = () => {
   const { login, loginWithOtp, switchDemoUser, availableUsers } = useAuth();
@@ -13,16 +15,16 @@ export const LoginView: React.FC = () => {
   const toast = useToast();
 
   const [authMode, setAuthMode] = useState<'password' | 'otp'>('password');
-  const [mobile, setMobile] = useState('۰۹۱۲۳۴۵۶۷۸۹');
-  const [password, setPassword] = useState('123456');
-  const [otpCode, setOtpCode] = useState('1234');
+  const [mobile, setMobile] = useState('');
+  const [password, setPassword] = useState('');
+  const [otpCode, setOtpCode] = useState('');
   const [otpStep, setOtpStep] = useState<'phone' | 'code'>('phone');
   const [loading, setLoading] = useState(false);
 
   const handlePasswordLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mobile || !password) {
-      toast.error('لطفاً شماره موبایل و رمز عبور را وارد کنید.');
+      toast.error('لطفاً شماره موبایل یا ایمیل و رمز عبور را وارد کنید.');
       return;
     }
     try {
@@ -37,14 +39,22 @@ export const LoginView: React.FC = () => {
     }
   };
 
-  const handleSendOtp = (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!mobile || mobile.length < 10) {
       toast.error('لطفاً شماره موبایل معتبر وارد نمایید.');
       return;
     }
-    setOtpStep('code');
-    toast.info('کد یک‌بارمصرف آزمایشی: ۱۲۳۴');
+    try {
+      setLoading(true);
+      const res = await otpService.sendOtp(mobile);
+      setOtpStep('code');
+      toast.success(res.message || 'کد تایید پیامکی ارسال شد.');
+    } catch (err: any) {
+      toast.error(err.message || 'خطا در ارسال پیامک');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
@@ -56,19 +66,6 @@ export const LoginView: React.FC = () => {
       navigate('/dashboard');
     } catch (err: any) {
       toast.error(err.message || 'کد تایید نادرست است');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleQuickSwitch = async (userId: string, roleName: string) => {
-    try {
-      setLoading(true);
-      await switchDemoUser(userId);
-      toast.success(`ورود با نقش: ${roleName}`);
-      navigate('/dashboard');
-    } catch {
-      toast.error('خطا در ورود به حساب آزمایشی');
     } finally {
       setLoading(false);
     }
@@ -132,7 +129,7 @@ export const LoginView: React.FC = () => {
                 placeholder="••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                helperText="رمز عبور پیش‌فرض دمو: 123456"
+                helperText="رمز عبور حساب کاربری املاکینو"
                 required
               />
 
@@ -189,56 +186,19 @@ export const LoginView: React.FC = () => {
             </div>
           )}
 
-          {/* Quick Demo Switcher (Instant Evaluation for RBAC & Privacy) */}
-          <div className="pt-4 border-t border-slate-100 space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-slate-500 mb-1">
-              <ShieldCheck className="w-4 h-4 text-emerald-600" />
-              <span>ورود سریع آزمایشی برای ارزیابی دسترسی‌ها:</span>
+          {/* Live Supabase Connection Badge & Settings Link */}
+          <div className="pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+            <div className="flex items-center gap-1.5 font-medium">
+              <span className={`w-2 h-2 rounded-full ${isSupabaseConfigured() ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <span>{isSupabaseConfigured() ? 'متصل به Supabase PostgreSQL' : 'پایگاه‌داده ابری در انتظار اتصال'}</span>
             </div>
-
-            <div className="grid grid-cols-1 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickSwitch('usr_101', 'مشاور مهدی رضایی (Agent)')}
-                className="w-full py-2 px-3 bg-slate-50 hover:bg-emerald-50 text-slate-800 hover:text-emerald-900 border border-slate-200 hover:border-emerald-300 rounded-xl text-xs font-medium text-right transition-colors flex items-center justify-between cursor-pointer"
-              >
-                <div>
-                  <div className="font-bold">مهدی رضایی (مشاور املاک)</div>
-                  <div className="text-[10px] text-slate-500">فایل‌های شخصی، متقاضیان اختصاصی و پیگیری‌ها</div>
-                </div>
-                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-[10px] font-bold rounded">
-                  AGENT
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickSwitch('usr_mgr_1', 'مدیر دپارتمان (Manager)')}
-                className="w-full py-2 px-3 bg-slate-50 hover:bg-blue-50 text-slate-800 hover:text-blue-900 border border-slate-200 hover:border-blue-300 rounded-xl text-xs font-medium text-right transition-colors flex items-center justify-between cursor-pointer"
-              >
-                <div>
-                  <div className="font-bold">مهندس علیرضا تهرانی (مدیر دپارتمان)</div>
-                  <div className="text-[10px] text-slate-500">داشبورد تیمی، شاخص‌ها + شماره‌های محافظت‌شده مشتریان</div>
-                </div>
-                <span className="px-2 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded">
-                  MANAGER
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleQuickSwitch('usr_102', 'مشاور سارا امینی (Agent 2)')}
-                className="w-full py-2 px-3 bg-slate-50 hover:bg-purple-50 text-slate-800 hover:text-purple-900 border border-slate-200 hover:border-purple-300 rounded-xl text-xs font-medium text-right transition-colors flex items-center justify-between cursor-pointer"
-              >
-                <div>
-                  <div className="font-bold">سارا امینی (مشاور همکار)</div>
-                  <div className="text-[10px] text-slate-500">ارزیابی تفکیک و ایزوله‌سازی فایل‌های دو مشاور در یک تیم</div>
-                </div>
-                <span className="px-2 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded">
-                  AGENT
-                </span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => navigate('/settings')}
+              className="text-emerald-700 hover:text-emerald-800 font-bold hover:underline cursor-pointer"
+            >
+              تنظیمات دیتابیس
+            </button>
           </div>
 
           <div className="text-center pt-2">

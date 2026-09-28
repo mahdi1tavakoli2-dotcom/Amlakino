@@ -12,8 +12,6 @@ export interface User {
   avatarUrl?: string;
   isActive: boolean;
   licenseCode?: string;
-  passwordHash?: string;
-  salt?: string;
   createdAt: string;
   exitDate?: string;
   gracePeriodEndsAt?: string;
@@ -415,7 +413,7 @@ export interface SecurityTestResult {
   id: string;
   title: string;
   description: string;
-  category: 'data_leakage' | 'ownership_bypass' | 'manager_overreach' | 'unshared_access' | 'team_exit';
+  category: 'data_leakage' | 'ownership_bypass' | 'manager_overreach' | 'unshared_access' | 'team_exit' | 'role_escalation';
   passed: boolean;
   attemptedAction: string;
   expectedOutcome: string;

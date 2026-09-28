@@ -29,6 +29,7 @@ import { securityTestService } from '../services/securityTestService';
 import { SecurityTestResult, User } from '../types';
 import { storageService } from '../services/storageService';
 import { toPersianDigits } from '../utils/formatters';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 export const SecurityTestsView: React.FC = () => {
   const { user, switchDemoUser } = useAuth();
@@ -241,58 +242,76 @@ export const SecurityTestsView: React.FC = () => {
         </Card>
       </div>
 
-      {/* Quick Role Switcher for Interactive Verification */}
+      {/* Role & Session Verification Status */}
       <Card className="p-4 bg-slate-50/90 border-slate-200 space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <Users className="w-4 h-4 text-emerald-600" />
             <span className="text-xs font-bold text-slate-800">
-              کاربر فعال جاری: <strong className="text-emerald-800">{user?.fullName}</strong> ({user?.role === 'manager' ? 'مدیر دپارتمان' : 'مشاور املاک'})
+              کاربر فعال جاری: <strong className="text-emerald-800">{user?.fullName || 'بدون نشست فعال'}</strong> ({user?.role === 'manager' ? 'مدیر دپارتمان' : user?.role === 'agent' ? 'مشاور املاک' : 'مهمان'})
             </span>
           </div>
-          <span className="text-[11px] text-slate-500">برای تغییر دیدگاه امنیتی سامانه کلیک کنید:</span>
+          {isSupabaseConfigured() ? (
+            <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-md">
+              منبع واحد هویت: نشست واقعی Supabase Auth
+            </span>
+          ) : (
+            <span className="text-[11px] text-slate-500">برای تغییر دیدگاه امنیتی کلیک کنید:</span>
+          )}
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => switchDemoUser('usr_101')}
-            className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer text-xs ${
-              user?.id === 'usr_101'
-                ? 'bg-emerald-100 border-emerald-500 font-bold text-emerald-950'
-                : 'bg-white border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <div>مشاور A (مهدی رضایی)</div>
-            <div className="text-[10px] text-slate-500">مالک آپارتمان صراف‌ها • عضو تیم</div>
-          </button>
+        {isSupabaseConfigured() ? (
+          <div className="p-3 bg-white rounded-xl border border-slate-200 text-xs text-slate-600 space-y-1">
+            <div className="font-bold text-slate-800 flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <span>احراز هویت تحت مدیریت کامل نشست Supabase</span>
+            </div>
+            <p className="text-[11px] text-slate-500">
+              هویت و دسترسی‌های کاربر جاری مستقیماً از نشست صادرشده توسط Supabase Auth (متد getSession) استخراج می‌گردد و امکان جابجایی دستی بدون ورود رسمی مسدود است.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => switchDemoUser('usr_101')}
+              className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer text-xs ${
+                user?.id === 'usr_101'
+                  ? 'bg-emerald-100 border-emerald-500 font-bold text-emerald-950'
+                  : 'bg-white border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <div>مشاور A (مهدی رضایی)</div>
+              <div className="text-[10px] text-slate-500">مالک آپارتمان صراف‌ها • عضو تیم</div>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => switchDemoUser('usr_102')}
-            className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer text-xs ${
-              user?.id === 'usr_102'
-                ? 'bg-emerald-100 border-emerald-500 font-bold text-emerald-950'
-                : 'bg-white border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <div>مشاور B (سارا امینی)</div>
-            <div className="text-[10px] text-slate-500">مالک دفتر میدان کاج و خریدار شایگان</div>
-          </button>
+            <button
+              type="button"
+              onClick={() => switchDemoUser('usr_102')}
+              className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer text-xs ${
+                user?.id === 'usr_102'
+                  ? 'bg-emerald-100 border-emerald-500 font-bold text-emerald-950'
+                  : 'bg-white border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <div>مشاور B (سارا امینی)</div>
+              <div className="text-[10px] text-slate-500">مالک دفتر میدان کاج و خریدار شایگان</div>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => switchDemoUser('usr_mgr_1')}
-            className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer text-xs ${
-              user?.id === 'usr_mgr_1'
-                ? 'bg-blue-100 border-blue-500 font-bold text-blue-950'
-                : 'bg-white border-slate-200 hover:bg-slate-100'
-            }`}
-          >
-            <div>مدیر دپارتمان (علیرضا تهرانی)</div>
-            <div className="text-[10px] text-slate-500">دید نظارتی، بدون دسترسی به شماره‌های خام</div>
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => switchDemoUser('usr_mgr_1')}
+              className={`p-2.5 rounded-xl border text-right transition-all cursor-pointer text-xs ${
+                user?.id === 'usr_mgr_1'
+                  ? 'bg-blue-100 border-blue-500 font-bold text-blue-950'
+                  : 'bg-white border-slate-200 hover:bg-slate-100'
+              }`}
+            >
+              <div>مدیر دپارتمان (علیرضا تهرانی)</div>
+              <div className="text-[10px] text-slate-500">دید نظارتی، بدون دسترسی به شماره‌های خام</div>
+            </button>
+          </div>
+        )}
       </Card>
 
       {/* Interactive Simulator Card */}

@@ -1,8 +1,7 @@
-import { AuditLog, AuditAction, UserRole, User } from '../types';
+import { AuditLog, AuditAction, UserRole } from '../types';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 export type { AuditLog, AuditAction };
-
-const AUDIT_LOGS_STORAGE_KEY = 'amlakino_audit_logs_v1';
 
 const initialAuditLogs: AuditLog[] = [
   {
@@ -43,55 +42,11 @@ const initialAuditLogs: AuditLog[] = [
     ipAddress: '192.168.1.45',
     createdAt: '۱۴۰۳/۰۷/۰۴ - ۱۲:۰۰',
   },
-  {
-    id: 'aud_4',
-    userId: 'usr_mgr_1',
-    userName: 'علیرضا تهرانی',
-    userRole: 'manager',
-    teamId: 'team_01',
-    action: 'login',
-    entityType: 'auth',
-    details: 'ورود مدیر دپارتمان به پنل مدیریتی',
-    ipAddress: '192.168.1.10',
-    createdAt: '۱۴۰۳/۰۷/۰۴ - ۱۳:۰۰',
-  },
-  {
-    id: 'aud_5',
-    userId: 'usr_101',
-    userName: 'مهدی رضایی',
-    userRole: 'agent',
-    teamId: 'team_01',
-    action: 'property_shared',
-    entityType: 'property',
-    entityId: 'prop_2',
-    details: 'اشتراک‌گذاری فایل ۱۱۰ متری بلوار فرهنگ با همکاران دپارتمان جهت کمیسیون مشترک',
-    ipAddress: '192.168.1.45',
-    createdAt: '۱۴۰۳/۰۷/۰۴ - ۱۴:۲۰',
-  },
 ];
 
+const memAuditLogs: AuditLog[] = [...initialAuditLogs];
+
 class AuditService {
-  private getStoredLogs(): AuditLog[] {
-    try {
-      const data = localStorage.getItem(AUDIT_LOGS_STORAGE_KEY);
-      if (!data) {
-        localStorage.setItem(AUDIT_LOGS_STORAGE_KEY, JSON.stringify(initialAuditLogs));
-        return initialAuditLogs;
-      }
-      return JSON.parse(data);
-    } catch {
-      return initialAuditLogs;
-    }
-  }
-
-  private saveLogs(logs: AuditLog[]): void {
-    try {
-      localStorage.setItem(AUDIT_LOGS_STORAGE_KEY, JSON.stringify(logs));
-    } catch (e) {
-      console.error('Failed to save audit logs:', e);
-    }
-  }
-
   public async logEvent(params: {
     user: { id: string; fullName: string; role: UserRole; teamId?: string };
     action: AuditAction;
@@ -100,7 +55,6 @@ class AuditService {
     details?: string;
     ipAddress?: string;
   }): Promise<AuditLog> {
-    const logs = this.getStoredLogs();
     const now = new Date();
     const dateStr = now.toLocaleDateString('fa-IR') + ' - ' + now.toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });
 
@@ -118,12 +72,26 @@ class AuditService {
       createdAt: dateStr,
     };
 
-    logs.unshift(newLog);
-    // Keep last 500 audit entries
-    if (logs.length > 500) {
-      logs.length = 500;
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from('audit_logs').insert({
+          user_id: params.user.id.startsWith('usr_') ? null : params.user.id,
+          user_name: params.user.fullName,
+          user_role: params.user.role,
+          team_id: params.user.teamId?.startsWith('team_') ? null : params.user.teamId,
+          action: params.action,
+          entity_type: params.entityType,
+          entity_id: params.entityId,
+          details: params.details,
+          ip_address: params.ipAddress || '127.0.0.1',
+        });
+      } catch (err: any) {
+        console.warn('Supabase audit log insert error:', err.message);
+      }
     }
-    this.saveLogs(logs);
+
+    memAuditLogs.unshift(newLog);
+    if (memAuditLogs.length > 200) memAuditLogs.length = 200;
     return newLog;
   }
 
@@ -132,16 +100,37 @@ class AuditService {
     teamId?: string;
     action?: AuditAction;
   }): Promise<AuditLog[]> {
-    let logs = this.getStoredLogs();
-    if (filter?.userId) {
-      logs = logs.filter((l) => l.userId === filter.userId);
+    if (isSupabaseConfigured()) {
+      try {
+        let q = supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(100);
+        if (filter?.userId) q = q.eq('user_id', filter.userId);
+        if (filter?.teamId) q = q.eq('team_id', filter.teamId);
+        if (filter?.action) q = q.eq('action', filter.action);
+        const { data, error } = await q;
+        if (!error && data && data.length > 0) {
+          return data.map((d: any) => ({
+            id: d.id,
+            userId: d.user_id || 'system',
+            userName: d.user_name,
+            userRole: d.user_role,
+            teamId: d.team_id,
+            action: d.action,
+            entityType: d.entity_type,
+            entityId: d.entity_id,
+            details: d.details,
+            ipAddress: d.ip_address,
+            createdAt: d.created_at,
+          }));
+        }
+      } catch (e) {
+        console.warn('Supabase getLogs error:', e);
+      }
     }
-    if (filter?.teamId) {
-      logs = logs.filter((l) => l.teamId === filter.teamId);
-    }
-    if (filter?.action) {
-      logs = logs.filter((l) => l.action === filter.action);
-    }
+
+    let logs = memAuditLogs;
+    if (filter?.userId) logs = logs.filter((l) => l.userId === filter.userId);
+    if (filter?.teamId) logs = logs.filter((l) => l.teamId === filter.teamId);
+    if (filter?.action) logs = logs.filter((l) => l.action === filter.action);
     return logs;
   }
 }

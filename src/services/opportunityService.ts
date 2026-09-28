@@ -6,7 +6,6 @@ import {
   FollowUpPriority,
   FollowUpStatus,
   Visit,
-  VisitStatus,
   Deal,
   Activity,
   ActivityType,
@@ -14,38 +13,15 @@ import {
   Client,
   Property,
 } from '../types';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { storageService } from './storageService';
-import { authzService } from './authzService';
-import { initialOpportunities, initialFollowUps, initialVisits } from './mockData';
 
-const STORAGE_KEYS = {
-  OPPORTUNITIES: 'amlakino_crm_opportunities_v2',
-  FOLLOWUPS: 'amlakino_followups',
-  VISITS: 'amlakino_visits',
-  DEALS: 'amlakino_crm_deals',
-  ACTIVITIES: 'amlakino_crm_activities',
-};
-
-function getItem<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) {
-      localStorage.setItem(key, JSON.stringify(fallback));
-      return fallback;
-    }
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function setItem<T>(key: string, value: T): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (e) {
-    console.error(`Failed saving ${key}`, e);
-  }
-}
+// In-Memory store for preview/dev mode (starts empty, strictly NO mock data)
+const memOpps: Opportunity[] = [];
+const memFollowUps: FollowUp[] = [];
+const memVisits: Visit[] = [];
+const memDeals: Deal[] = [];
+const memActivities: Activity[] = [];
 
 export const opportunityService = {
   // -------------------------------------------------------------
@@ -53,16 +29,41 @@ export const opportunityService = {
   // -------------------------------------------------------------
   async getAll(currentUser?: User | null): Promise<Opportunity[]> {
     const user = currentUser || (await storageService.getCurrentUser());
-    const raw = getItem<Opportunity[]>(STORAGE_KEYS.OPPORTUNITIES, []);
-
-    // If empty in v2 storage, hydrate with default mock opportunities
-    if (raw.length === 0) {
-      const hydrated = await this.hydrateInitialOpportunities(user);
-      setItem(STORAGE_KEYS.OPPORTUNITIES, hydrated);
-      return this.filterByAccess(hydrated, user);
+    if (isSupabaseConfigured()) {
+      const { data, error } = await supabase.from('opportunities').select('*');
+      if (error) {
+        console.error('Supabase opportunities error:', error.message);
+        throw new Error(`خطا در واکشی فرصت‌های معامله از پایگاه داده: ${error.message}`);
+      }
+      const list: Opportunity[] = (data || []).map((d: any) => ({
+        id: d.id,
+        title: d.title,
+        clientId: d.client_id,
+        clientName: d.client_name,
+        propertyId: d.property_id,
+        propertyTitle: d.property_title,
+        matchScore: d.match_score,
+        stage: d.stage,
+        status: d.status,
+        priority: d.priority,
+        nextAction: d.next_action,
+        nextFollowUp: d.next_follow_up,
+        estimatedValue: Number(d.estimated_value || 0),
+        estimatedCommission: Number(d.estimated_commission || 0),
+        probabilityPercent: Number(d.probability_percent || 20),
+        notes: d.notes,
+        expectedCloseDate: d.expected_close_date,
+        ownerId: d.owner_id,
+        privacyState: d.privacy_state,
+        agentId: d.agent_id,
+        agentName: d.agent_name,
+        createdAt: d.created_at,
+        updatedAt: d.updated_at,
+      }));
+      return this.filterByAccess(list, user);
     }
 
-    return this.filterByAccess(raw, user);
+    return this.filterByAccess(memOpps, user);
   },
 
   async getById(id: string, currentUser?: User | null): Promise<Opportunity | null> {
@@ -76,20 +77,15 @@ export const opportunityService = {
       return list
         .filter((o) => o.ownerId === user.id || o.privacyState === 'shared')
         .map((o) => {
-          // If not owner, strip private notes
           if (o.ownerId !== user.id) {
             return { ...o, notes: undefined };
           }
           return o;
         });
     }
-    // Managers can see list, but private notes are kept strictly private to the agent
     return list.map((o) => {
       if (o.ownerId !== user.id) {
-        return {
-          ...o,
-          notes: undefined, // Private notes must remain private
-        };
+        return { ...o, notes: undefined };
       }
       return o;
     });
@@ -110,7 +106,6 @@ export const opportunityService = {
     const user = currentUser || (await storageService.getCurrentUser());
     if (!user) throw new Error('کاربر وارد نشده است.');
 
-    const list = getItem<Opportunity[]>(STORAGE_KEYS.OPPORTUNITIES, []);
     const newId = `opp_${Date.now()}`;
     const now = new Date().toISOString();
 
@@ -141,12 +136,39 @@ export const opportunityService = {
       updatedAt: now,
     };
 
-    list.unshift(newOpp);
-    setItem(STORAGE_KEYS.OPPORTUNITIES, list);
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase.from('opportunities').insert({
+          title: newOpp.title,
+          client_id: newOpp.clientId,
+          client_name: newOpp.clientName,
+          property_id: newOpp.propertyId,
+          property_title: newOpp.propertyTitle,
+          match_score: newOpp.matchScore,
+          stage: newOpp.stage,
+          status: newOpp.status,
+          priority: newOpp.priority,
+          next_action: newOpp.nextAction,
+          next_follow_up: newOpp.nextFollowUp,
+          estimated_value: newOpp.estimatedValue,
+          estimated_commission: newOpp.estimatedCommission,
+          notes: newOpp.notes,
+          owner_id: user.id,
+          privacy_state: newOpp.privacyState,
+          agent_id: user.id,
+          agent_name: user.fullName,
+        }).select().single();
+        if (!error && data) newOpp.id = data.id;
+      } catch (err: any) {
+        console.warn('Supabase create opportunity error:', err.message);
+        memOpps.unshift(newOpp);
+      }
+    } else {
+      memOpps.unshift(newOpp);
+    }
 
-    // Log Activity
     await this.addActivity({
-      opportunityId: newId,
+      opportunityId: newOpp.id,
       type: 'opportunity_created',
       description: `ایجاد فرصت جدید معامله بین متقاضی ${params.client.fullName} و فایل ${params.property.title}`,
       isPrivate: false,
@@ -164,11 +186,9 @@ export const opportunityService = {
     const user = currentUser || (await storageService.getCurrentUser());
     if (!user) throw new Error('کاربر وارد نشده است.');
 
-    const list = getItem<Opportunity[]>(STORAGE_KEYS.OPPORTUNITIES, []);
-    const index = list.findIndex((o) => o.id === id);
-    if (index === -1) throw new Error('فرصت یافت نشد.');
+    const opp = await this.getById(id, user);
+    if (!opp) throw new Error('فرصت یافت نشد.');
 
-    const opp = list[index];
     if (user.role === 'agent' && opp.ownerId !== user.id) {
       throw new Error('فقط مشاور مالک مجاز به تغییر مرحله این فرصت است.');
     }
@@ -187,10 +207,21 @@ export const opportunityService = {
       opp.notes = opp.notes ? `${opp.notes}\n${notes}` : notes;
     }
 
-    list[index] = opp;
-    setItem(STORAGE_KEYS.OPPORTUNITIES, list);
+    if (isSupabaseConfigured()) {
+      await supabase
+        .from('opportunities')
+        .update({
+          stage: opp.stage,
+          status: opp.status,
+          notes: opp.notes,
+          updated_at: opp.updatedAt,
+        })
+        .eq('id', id);
+    } else {
+      const idx = memOpps.findIndex((o) => o.id === id);
+      if (idx !== -1) memOpps[idx] = opp;
+    }
 
-    // Activity
     await this.addActivity({
       opportunityId: id,
       type: 'stage_change',
@@ -209,16 +240,13 @@ export const opportunityService = {
     const user = currentUser || (await storageService.getCurrentUser());
     if (!user) throw new Error('کاربر وارد نشده است.');
 
-    const list = getItem<Opportunity[]>(STORAGE_KEYS.OPPORTUNITIES, []);
-    const index = list.findIndex((o) => o.id === id);
-    if (index === -1) throw new Error('فرصت یافت نشد.');
+    const opp = await this.getById(id, user);
+    if (!opp) throw new Error('فرصت یافت نشد.');
 
-    const opp = list[index];
     if (user.role === 'agent' && opp.ownerId !== user.id) {
       throw new Error('فقط مشاور مالک مجاز به ویرایش این فرصت است.');
     }
 
-    // Protect ownership
     const { ownerId, ...safeUpdates } = updates;
     const updated = {
       ...opp,
@@ -226,8 +254,28 @@ export const opportunityService = {
       updatedAt: new Date().toISOString(),
     };
 
-    list[index] = updated;
-    setItem(STORAGE_KEYS.OPPORTUNITIES, list);
+    if (isSupabaseConfigured()) {
+      await supabase
+        .from('opportunities')
+        .update({
+          title: updated.title,
+          stage: updated.stage,
+          status: updated.status,
+          priority: updated.priority,
+          next_action: updated.nextAction,
+          next_follow_up: updated.nextFollowUp,
+          estimated_value: updated.estimatedValue,
+          estimated_commission: updated.estimatedCommission,
+          notes: updated.notes,
+          expected_close_date: updated.expectedCloseDate,
+          updated_at: updated.updatedAt,
+        })
+        .eq('id', id);
+    } else {
+      const idx = memOpps.findIndex((o) => o.id === id);
+      if (idx !== -1) memOpps[idx] = updated;
+    }
+
     return updated;
   },
 
@@ -253,7 +301,6 @@ export const opportunityService = {
     const user = currentUser || (await storageService.getCurrentUser());
     if (!user) throw new Error('کاربر وارد نشده است.');
 
-    const followUps = getItem<FollowUp[]>(STORAGE_KEYS.FOLLOWUPS, initialFollowUps);
     const newId = `flw_${Date.now()}`;
     const newFollowUp: FollowUp = {
       id: newId,
@@ -276,10 +323,33 @@ export const opportunityService = {
       createdAt: new Date().toISOString(),
     };
 
-    followUps.unshift(newFollowUp);
-    setItem(STORAGE_KEYS.FOLLOWUPS, followUps);
+    if (isSupabaseConfigured()) {
+      try {
+        const { data } = await supabase.from('follow_ups').insert({
+          title: newFollowUp.title,
+          description: newFollowUp.description,
+          due_date: newFollowUp.dueDate,
+          due_time: newFollowUp.dueTime,
+          due_at: newFollowUp.dueAt,
+          priority: newFollowUp.priority,
+          status: newFollowUp.status,
+          type: newFollowUp.type,
+          opportunity_id: newFollowUp.opportunityId || null,
+          client_id: newFollowUp.clientId || null,
+          client_name: newFollowUp.clientName,
+          property_id: newFollowUp.propertyId || null,
+          property_title: newFollowUp.propertyTitle,
+          owner_id: user.id,
+          agent_id: user.id,
+        }).select().single();
+        if (data) newFollowUp.id = data.id;
+      } catch {
+        memFollowUps.unshift(newFollowUp);
+      }
+    } else {
+      memFollowUps.unshift(newFollowUp);
+    }
 
-    // If linked to opportunity, log activity and update nextFollowUp
     if (params.opportunityId) {
       await this.addActivity({
         opportunityId: params.opportunityId,
@@ -288,7 +358,6 @@ export const opportunityService = {
         isPrivate: false,
       }, user);
 
-      // Update opp's nextFollowUp
       await this.update(params.opportunityId, {
         nextFollowUp: `${params.title} (${params.dueAt})`,
       }, user);
@@ -303,30 +372,42 @@ export const opportunityService = {
     currentUser?: User | null
   ): Promise<FollowUp> {
     const user = currentUser || (await storageService.getCurrentUser());
-    const followUps = getItem<FollowUp[]>(STORAGE_KEYS.FOLLOWUPS, initialFollowUps);
-    const index = followUps.findIndex((f) => f.id === id);
-    if (index === -1) throw new Error('پیگیری یافت نشد.');
+    const followUps = isSupabaseConfigured() ? await storageService.getFollowUps(user) : memFollowUps;
+    const existing = followUps.find((f) => f.id === id);
+    if (!existing) throw new Error('پیگیری یافت نشد.');
 
-    const f = followUps[index];
-    f.status = 'Completed';
-    f.completedAt = new Date().toISOString();
-    if (resultNotes) {
-      f.description = f.description ? `${f.description}\n[انجام شد]: ${resultNotes}` : `[انجام شد]: ${resultNotes}`;
+    const newStatus = 'Completed';
+    const completedAt = new Date().toISOString();
+    const updatedDesc = resultNotes
+      ? (existing.description ? `${existing.description}\n[انجام شد]: ${resultNotes}` : `[انجام شد]: ${resultNotes}`)
+      : existing.description;
+
+    if (isSupabaseConfigured()) {
+      await supabase
+        .from('follow_ups')
+        .update({
+          status: newStatus,
+          completed_at: completedAt,
+          description: updatedDesc,
+        })
+        .eq('id', id);
+    } else {
+      const idx = memFollowUps.findIndex((f) => f.id === id);
+      if (idx !== -1) {
+        memFollowUps[idx] = { ...existing, status: newStatus as any, completedAt, description: updatedDesc };
+      }
     }
 
-    followUps[index] = f;
-    setItem(STORAGE_KEYS.FOLLOWUPS, followUps);
-
-    if (f.opportunityId) {
+    if (existing.opportunityId) {
       await this.addActivity({
-        opportunityId: f.opportunityId,
+        opportunityId: existing.opportunityId,
         type: 'followup_completed',
-        description: `انجام پیگیری: ${f.title}${resultNotes ? ` - نتیجه: ${resultNotes}` : ''}`,
+        description: `انجام پیگیری: ${existing.title}${resultNotes ? ` - نتیجه: ${resultNotes}` : ''}`,
         isPrivate: false,
       }, user);
     }
 
-    return f;
+    return { ...existing, status: newStatus as any, completedAt, description: updatedDesc };
   },
 
   // -------------------------------------------------------------
@@ -346,7 +427,6 @@ export const opportunityService = {
     const user = currentUser || (await storageService.getCurrentUser());
     if (!user) throw new Error('کاربر وارد نشده است.');
 
-    const visits = getItem<Visit[]>(STORAGE_KEYS.VISITS, initialVisits);
     const newId = `vst_${Date.now()}`;
     const newVisit: Visit = {
       id: newId,
@@ -371,8 +451,30 @@ export const opportunityService = {
       createdAt: new Date().toISOString(),
     };
 
-    visits.unshift(newVisit);
-    setItem(STORAGE_KEYS.VISITS, visits);
+    if (isSupabaseConfigured()) {
+      try {
+        const { data } = await supabase.from('visits').insert({
+          opportunity_id: newVisit.opportunityId || null,
+          client_id: newVisit.clientId,
+          client_name: newVisit.clientName,
+          client_phone: newVisit.clientPhone,
+          property_id: newVisit.propertyId,
+          property_title: newVisit.propertyTitle,
+          property_district: newVisit.propertyDistrict,
+          date: newVisit.date,
+          time: newVisit.time,
+          status: newVisit.status,
+          notes: newVisit.notes,
+          owner_id: user.id,
+          agent_id: user.id,
+        }).select().single();
+        if (data) newVisit.id = data.id;
+      } catch {
+        memVisits.unshift(newVisit);
+      }
+    } else {
+      memVisits.unshift(newVisit);
+    }
 
     if (params.opportunityId) {
       await this.addActivity({
@@ -382,7 +484,6 @@ export const opportunityService = {
         isPrivate: false,
       }, user);
 
-      // Transition opportunity to visit_scheduled
       await this.updateStage(params.opportunityId, 'visit_scheduled', user);
       await this.update(params.opportunityId, {
         nextAction: `انجام بازدید در تاریخ ${params.date} ساعت ${params.time}`,
@@ -399,30 +500,37 @@ export const opportunityService = {
     currentUser?: User | null
   ): Promise<Visit> {
     const user = currentUser || (await storageService.getCurrentUser());
-    const visits = getItem<Visit[]>(STORAGE_KEYS.VISITS, initialVisits);
-    const index = visits.findIndex((v) => v.id === visitId);
-    if (index === -1) throw new Error('بازدید یافت نشد.');
+    const visits = isSupabaseConfigured() ? await storageService.getVisits(user) : memVisits;
+    const existing = visits.find((v) => v.id === visitId);
+    if (!existing) throw new Error('بازدید یافت نشد.');
 
-    const v = visits[index];
-    v.status = 'Completed';
-    v.feedback = feedback;
+    const newStatus = 'Completed';
 
-    visits[index] = v;
-    setItem(STORAGE_KEYS.VISITS, visits);
+    if (isSupabaseConfigured()) {
+      await supabase
+        .from('visits')
+        .update({
+          status: newStatus,
+          feedback,
+        })
+        .eq('id', visitId);
+    } else {
+      const idx = memVisits.findIndex((v) => v.id === visitId);
+      if (idx !== -1) memVisits[idx] = { ...existing, status: newStatus as any, feedback };
+    }
 
-    if (v.opportunityId) {
+    if (existing.opportunityId) {
       await this.addActivity({
-        opportunityId: v.opportunityId,
+        opportunityId: existing.opportunityId,
         type: 'visit_done',
         description: `بازدید با موفقیت انجام شد.${feedback ? ` بازخورد: ${feedback}` : ''}`,
         isPrivate: false,
       }, user);
 
-      // Advance stage to visited
-      await this.updateStage(v.opportunityId, 'visited', user, feedback);
+      await this.updateStage(existing.opportunityId, 'visited', user, feedback);
     }
 
-    return v;
+    return { ...existing, status: newStatus as any, feedback };
   },
 
   // -------------------------------------------------------------
@@ -449,7 +557,6 @@ export const opportunityService = {
       throw new Error('اطلاعات ملک یا متقاضی برای ثبت معامله در دسترس نیست.');
     }
 
-    const deals = getItem<Deal[]>(STORAGE_KEYS.DEALS, []);
     const newDealId = `deal_${Date.now()}`;
     const dateStr = params.date || new Date().toISOString().split('T')[0];
 
@@ -476,13 +583,35 @@ export const opportunityService = {
       createdAt: new Date().toISOString(),
     };
 
-    deals.unshift(deal);
-    setItem(STORAGE_KEYS.DEALS, deals);
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from('deals').insert({
+          opportunity_id: deal.opportunityId,
+          property_id: deal.propertyId,
+          property_title: deal.propertyTitle,
+          client_id: deal.clientId,
+          client_name: deal.clientName,
+          agent_id: user.id,
+          agent_name: user.fullName,
+          deal_type: deal.dealType,
+          final_price: deal.finalPrice,
+          commission_total: deal.commissionTotal,
+          agent_share: deal.commissionTotal ? Math.round(deal.commissionTotal * 0.6) : 0,
+          office_share: deal.commissionTotal ? Math.round(deal.commissionTotal * 0.4) : 0,
+          status: 'won',
+          notes: deal.notes,
+          owner_id: user.id,
+        });
+      } catch (err: any) {
+        console.warn('Supabase deal insert error:', err.message);
+        memDeals.unshift(deal);
+      }
+    } else {
+      memDeals.unshift(deal);
+    }
 
-    // Advance opportunity to won
     await this.updateStage(opp.id, 'won', user, params.notes || 'تبدیل به معامله نهایی (Deal Closed)');
 
-    // Log Activity
     await this.addActivity({
       opportunityId: opp.id,
       type: 'deal_won',
@@ -501,11 +630,40 @@ export const opportunityService = {
     currentUser?: User | null
   ): Promise<Activity[]> {
     const user = currentUser || (await storageService.getCurrentUser());
-    const all = getItem<Activity[]>(STORAGE_KEYS.ACTIVITIES, []);
-    const oppActivities = all.filter((a) => a.opportunityId === opportunityId);
 
-    // Private notes rule: Only the owner can read their private notes/activities
-    return oppActivities.filter((a) => {
+    let all: Activity[] = [];
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase
+          .from('activities')
+          .select('*')
+          .eq('opportunity_id', opportunityId)
+          .order('timestamp', { ascending: false });
+        if (!error && data) {
+          all = data.map((a: any) => ({
+            id: a.id,
+            userId: a.user_id,
+            userName: a.user_name,
+            type: a.type,
+            entityType: a.entity_type,
+            entityId: a.entity_id,
+            opportunityId: a.opportunity_id,
+            description: a.description,
+            timestamp: a.timestamp,
+            ownerId: a.owner_id,
+            isPrivate: a.is_private,
+          }));
+        } else {
+          all = memActivities.filter((a) => a.opportunityId === opportunityId);
+        }
+      } catch {
+        all = memActivities.filter((a) => a.opportunityId === opportunityId);
+      }
+    } else {
+      all = memActivities.filter((a) => a.opportunityId === opportunityId);
+    }
+
+    return all.filter((a) => {
       if (a.isPrivate) {
         return user?.id === a.ownerId;
       }
@@ -525,7 +683,6 @@ export const opportunityService = {
     const user = currentUser || (await storageService.getCurrentUser());
     if (!user) throw new Error('کاربر وارد نشده است.');
 
-    const all = getItem<Activity[]>(STORAGE_KEYS.ACTIVITIES, []);
     const newAct: Activity = {
       id: `act_${Date.now()}_${Math.random().toString(36).substring(2, 5)}`,
       userId: user.id,
@@ -541,210 +698,25 @@ export const opportunityService = {
       privacyState: params.isPrivate ? 'private' : 'shared',
     };
 
-    all.unshift(newAct);
-    setItem(STORAGE_KEYS.ACTIVITIES, all);
+    if (isSupabaseConfigured()) {
+      try {
+        await supabase.from('activities').insert({
+          user_id: user.id,
+          user_name: user.fullName,
+          type: newAct.type,
+          entity_type: 'opportunity',
+          entity_id: params.opportunityId,
+          opportunity_id: params.opportunityId,
+          description: newAct.description,
+          owner_id: user.id,
+        });
+      } catch {
+        memActivities.unshift(newAct);
+      }
+    } else {
+      memActivities.unshift(newAct);
+    }
+
     return newAct;
-  },
-
-  // -------------------------------------------------------------
-  // Hydrate Initial Opportunities (linking existing properties & clients)
-  // -------------------------------------------------------------
-  async hydrateInitialOpportunities(user: User | null): Promise<Opportunity[]> {
-    const properties = await storageService.getProperties(user);
-    const clients = await storageService.getClients(user);
-
-    const opps: Opportunity[] = [
-      {
-        id: 'opp_1',
-        title: 'فروش آپارتمان ۱۴۵ متری به مهندس پارسا',
-        clientId: 'cli_1',
-        clientName: 'مهندس فرشید پارسا',
-        client: (clients.find((c) => c.id === 'cli_1') || {
-          id: 'cli_1',
-          fullName: 'مهندس فرشید پارسا',
-          name: 'مهندس فرشید پارسا',
-          mobile: '۰۹۱۲۵۵۵۹۸۷۶',
-          phone: '۰۹۱۲۵۵۵۹۸۷۶',
-          role: 'buyer',
-          status: 'active',
-          desiredDealType: 'sale',
-          ownerId: 'usr_101',
-          privacyState: 'private',
-          agentId: 'usr_101',
-          createdAt: '۱۴۰۳/۰۷/۰۱',
-        }) as Client,
-        propertyId: 'prop_1',
-        propertyTitle: 'آپارتمان ۱۴۵ متری صراف‌ها',
-        property: (properties.find((p) => p.id === 'prop_1') || {
-          id: 'prop_1',
-          code: '1001',
-          title: 'آپارتمان ۱۴۵ متری صراف‌های جنوبی',
-          dealType: 'sale',
-          propertyType: 'apartment',
-          price: 22_500_000_000,
-          totalPrice: 22_500_000_000,
-          area: 145,
-          bedrooms: 3,
-          district: 'سعادت‌آباد',
-          neighborhood: 'سعادت‌آباد',
-          city: 'تهران',
-          address: 'سعادت‌آباد، صراف‌های جنوبی',
-          ownerId: 'usr_101',
-          agentId: 'usr_101',
-          privacyState: 'private',
-          status: 'active',
-          availabilityStatus: 'available',
-          features: ['آسانسور', 'پارکینگ', 'انباری'],
-          images: [],
-          media: [],
-          createdAt: '۱۴۰۳/۰۷/۰۱',
-          updatedAt: '۱۴۰۳/۰۷/۰۴',
-        }) as Property,
-        matchScore: 96,
-        stage: 'negotiation',
-        status: 'active',
-        priority: 'high',
-        nextAction: 'برگزاری جلسه نشست با مالک جهت تخفیف متری ۲ میلیون تومان',
-        nextFollowUp: 'امروز ساعت ۱۸:۳۰',
-        owner: { id: 'usr_101', name: 'مهدی رضایی' },
-        ownerId: 'usr_101',
-        agentId: 'usr_101',
-        agentName: 'مهدی رضایی',
-        privacyState: 'private',
-        estimatedValue: 22_500_000_000,
-        estimatedCommission: 112_500_000,
-        notes: 'مشتری ملک را پسندیده؛ سر قیمت توافق اولیه حاصل شده است.',
-        createdAt: '۱۴۰۳/۰۷/۰۲',
-        updatedAt: '۱۴۰۳/۰۷/۰۴',
-      },
-      {
-        id: 'opp_2',
-        title: 'اجاره ۱۱۰ متری فرهنگ به دکتر معتمدی',
-        clientId: 'cli_2',
-        clientName: 'خانم دکتر معتمدی',
-        client: (clients.find((c) => c.id === 'cli_2') || {
-          id: 'cli_2',
-          fullName: 'سرکار خانم دکتر معتمدی',
-          name: 'خانم دکتر معتمدی',
-          mobile: '۰۹۱۲۶۶۶۳۲۱۰',
-          phone: '۰۹۱۲۶۶۶۳۲۱۰',
-          role: 'tenant',
-          status: 'active',
-          desiredDealType: 'rent',
-          ownerId: 'usr_101',
-          privacyState: 'shared',
-          agentId: 'usr_101',
-          createdAt: '۱۴۰۳/۰۶/۳۰',
-        }) as Client,
-        propertyId: 'prop_2',
-        propertyTitle: '۱۱۰ متری بلوار فرهنگ',
-        property: (properties.find((p) => p.id === 'prop_2') || {
-          id: 'prop_2',
-          code: '1002',
-          title: '۱۱۰ متری نوساز، بلوار فرهنگ',
-          dealType: 'rent',
-          propertyType: 'apartment',
-          deposit: 1_200_000_000,
-          rent: 35_000_000,
-          area: 110,
-          bedrooms: 2,
-          district: 'سعادت‌آباد',
-          neighborhood: 'سعادت‌آباد',
-          city: 'تهران',
-          address: 'بلوار فرهنگ',
-          ownerId: 'usr_101',
-          agentId: 'usr_101',
-          privacyState: 'shared',
-          status: 'active',
-          availabilityStatus: 'available',
-          features: ['آسانسور', 'پارکینگ', 'انباری', 'نگهبانی'],
-          images: [],
-          media: [],
-          createdAt: '۱۴۰۳/۰۶/۳۰',
-          updatedAt: '۱۴۰۳/۰۷/۰۴',
-        }) as Property,
-        matchScore: 92,
-        stage: 'contract',
-        status: 'active',
-        priority: 'high',
-        nextAction: 'تحویل پیش‌نویس قرارداد اجاره‌نامه برای تایید چک‌ها',
-        nextFollowUp: 'فردا ساعت ۱۰:۰۰',
-        owner: { id: 'usr_101', name: 'مهدی رضایی' },
-        ownerId: 'usr_101',
-        agentId: 'usr_101',
-        agentName: 'مهدی رضایی',
-        privacyState: 'shared',
-        estimatedValue: 2_400_000_000,
-        estimatedCommission: 24_000_000,
-        notes: 'چک‌های اجاره نوشته شده، تاریخ تحویل اول آبان.',
-        createdAt: '۱۴۰۳/۰۷/۰۱',
-        updatedAt: '۱۴۰۳/۰۷/۰۴',
-      },
-      {
-        id: 'opp_3',
-        title: 'خرید ویلای گل‌سنگ توسط حاج علیرضا اکبری',
-        clientId: 'cli_3',
-        clientName: 'حاج علیرضا اکبری',
-        client: (clients.find((c) => c.id === 'cli_3') || {
-          id: 'cli_3',
-          fullName: 'حاج علیرضا اکبری',
-          name: 'حاج علیرضا اکبری',
-          mobile: '۰۹۱۲۷۷۷۸۸۹۹',
-          phone: '۰۹۱۲۷۷۷۸۸۹۹',
-          role: 'investor',
-          status: 'negotiation',
-          desiredDealType: 'sale',
-          ownerId: 'usr_102',
-          privacyState: 'private',
-          agentId: 'usr_102',
-          createdAt: '۱۴۰۳/۰۶/۲۰',
-        }) as Client,
-        propertyId: 'prop_3',
-        propertyTitle: 'ویلای ۴۵۰ متری نیاوران',
-        property: (properties.find((p) => p.id === 'prop_3') || {
-          id: 'prop_3',
-          code: '1003',
-          title: 'ویلای ۴۵۰ متری باغ‌مستقل، نیاوران گل‌سنگ',
-          dealType: 'sale',
-          propertyType: 'villa',
-          price: 85_000_000_000,
-          totalPrice: 85_000_000_000,
-          area: 450,
-          bedrooms: 4,
-          district: 'نیاوران',
-          neighborhood: 'نیاوران',
-          city: 'تهران',
-          address: 'نیاوران، خیابان گل‌سنگ',
-          ownerId: 'usr_102',
-          agentId: 'usr_102',
-          privacyState: 'private',
-          status: 'active',
-          availabilityStatus: 'available',
-          features: ['استخر', 'سونا', 'حیاط مشجر'],
-          images: [],
-          media: [],
-          createdAt: '۱۴۰۳/۰۶/۲۹',
-          updatedAt: '۱۴۰۳/۰۷/۰۳',
-        }) as Property,
-        matchScore: 88,
-        stage: 'visit_scheduled',
-        status: 'active',
-        priority: 'medium',
-        nextAction: 'بازدید اول با حضور خانواده آقای اکبری',
-        nextFollowUp: 'پنج‌شنبه ساعت ۱۱:۳۰',
-        owner: { id: 'usr_102', name: 'سارا امینی' },
-        ownerId: 'usr_102',
-        agentId: 'usr_102',
-        agentName: 'سارا امینی',
-        privacyState: 'private',
-        estimatedValue: 85_000_000_000,
-        estimatedCommission: 425_000_000,
-        notes: 'خانواده متقاضی ویلای مشجر با آرامش هستند.',
-        createdAt: '۱۴۰۳/۰۶/۲۹',
-        updatedAt: '۱۴۰۳/۰۷/۰۳',
-      },
-    ];
-
-    return opps;
   },
 };

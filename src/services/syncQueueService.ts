@@ -17,35 +17,17 @@ export interface SyncQueueItem {
   error?: string;
 }
 
-const STORAGE_KEY = 'amlakino_sync_queue';
-
 class SyncQueueService {
   private queue: SyncQueueItem[] = [];
   private listeners: Set<(queue: SyncQueueItem[]) => void> = new Set();
 
   constructor() {
-    this.loadQueue();
+    this.queue = [];
   }
 
-  private loadQueue() {
-    try {
-      const data = localStorage.getItem(STORAGE_KEY);
-      if (data) {
-        this.queue = JSON.parse(data);
-      }
-    } catch (e) {
-      console.warn('Failed to load sync queue:', e);
-      this.queue = [];
-    }
-  }
-
-  private saveQueue() {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.queue));
-      this.notifyListeners();
-    } catch (e) {
-      console.error('Failed to save sync queue:', e);
-    }
+  private notifyListeners() {
+    const current = [...this.queue];
+    this.listeners.forEach((l) => l(current));
   }
 
   public getQueue(): SyncQueueItem[] {
@@ -66,18 +48,18 @@ class SyncQueueService {
     };
 
     this.queue.push(newItem);
-    this.saveQueue();
+    this.notifyListeners();
     return newItem.id;
   }
 
   public remove(id: string) {
     this.queue = this.queue.filter((i) => i.id !== id);
-    this.saveQueue();
+    this.notifyListeners();
   }
 
   public clear() {
     this.queue = [];
-    this.saveQueue();
+    this.notifyListeners();
   }
 
   public subscribe(listener: (queue: SyncQueueItem[]) => void): () => void {
@@ -86,11 +68,6 @@ class SyncQueueService {
     return () => {
       this.listeners.delete(listener);
     };
-  }
-
-  private notifyListeners() {
-    const current = [...this.queue];
-    this.listeners.forEach((l) => l(current));
   }
 
   /**
@@ -121,7 +98,7 @@ class SyncQueueService {
         item.retryCount += 1;
         item.error = err?.message || 'Sync failed';
         failed++;
-        this.saveQueue();
+        this.notifyListeners();
       }
     }
 

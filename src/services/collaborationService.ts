@@ -1,10 +1,8 @@
-import { CollaborationRequest, User, Notification } from '../types';
+import { CollaborationRequest, User } from '../types';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { storageService } from './storageService';
 import { auditService } from './auditService';
 
-const STORAGE_KEY = 'amlakino_collaboration_requests_v2';
-
-// 7-day default expiration helper
 function getDefaultExpirationDate(days = 7): string {
   const d = new Date();
   d.setDate(d.getDate() + days);
@@ -53,74 +51,79 @@ const initialCollaborationRequests: CollaborationRequest[] = [
     commissionSplit: '50/50',
     notes: 'پزشک متخصص برای مطب به دنبال واحد است.',
     collaborationGranted: true,
-    expiresAt: getDefaultExpirationDate(-2), // Past expiration date, but status was accepted before
+    expiresAt: getDefaultExpirationDate(-2),
     createdAt: '۱۴۰۳/۰۶/۲۸',
     respondedAt: '۱۴۰۳/۰۶/۲۹',
   },
 ];
 
-function getStoredRequests(): CollaborationRequest[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(initialCollaborationRequests));
-      return initialCollaborationRequests;
-    }
-    return JSON.parse(raw);
-  } catch (e) {
-    console.error('Error reading collaboration requests:', e);
-    return initialCollaborationRequests;
-  }
-}
-
-function saveStoredRequests(list: CollaborationRequest[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-  } catch (e) {
-    console.error('Error saving collaboration requests:', e);
-  }
-}
+const memCollabRequests: CollaborationRequest[] = [...initialCollaborationRequests];
 
 export const collaborationService = {
   /**
    * Retrieves all collaboration requests accessible to the user.
    * Agents only see requests where they are sender or receiver.
-   * Auto-expires pending requests past their 7-day expiration date.
    */
   async getRequests(currentUser?: User | null): Promise<CollaborationRequest[]> {
     const user = currentUser || (await storageService.getCurrentUser());
     if (!user) return [];
 
-    let list = getStoredRequests();
-    const now = new Date().getTime();
-    let hasChanges = false;
+    let list: CollaborationRequest[] = [];
 
-    // Check expiration for pending requests
+    if (isSupabaseConfigured()) {
+      try {
+        const { data, error } = await supabase.from('collaboration_requests').select('*');
+        if (!error && data) {
+          list = data.map((d: any) => ({
+            id: d.id,
+            senderId: d.sender_id,
+            senderName: d.sender_name,
+            senderTeamId: d.sender_team_id,
+            senderTeamName: d.sender_team_name,
+            receiverId: d.receiver_id,
+            receiverName: d.receiver_name,
+            receiverTeamId: d.receiver_team_id,
+            propertyId: d.property_id,
+            propertyTitle: d.property_title,
+            propertyDistrict: d.property_district,
+            clientId: d.client_id,
+            clientSummary: d.client_summary,
+            matchScore: d.match_score,
+            status: d.status,
+            commissionSplit: d.commission_split,
+            notes: d.notes,
+            collaborationGranted: d.collaboration_granted,
+            expiresAt: d.expires_at,
+            respondedAt: d.responded_at,
+            createdAt: d.created_at,
+          }));
+        } else {
+          list = memCollabRequests;
+        }
+      } catch {
+        list = memCollabRequests;
+      }
+    } else {
+      list = memCollabRequests;
+    }
+
+    const now = Date.now();
     list = list.map((req) => {
       const isPending = req.status === 'pending' || req.status === 'Pending';
       if (isPending && req.expiresAt) {
         const expTime = new Date(req.expiresAt).getTime();
         if (!isNaN(expTime) && expTime <= now) {
-          hasChanges = true;
-          return {
-            ...req,
-            status: 'expired' as const,
-          };
+          return { ...req, status: 'expired' as const };
         }
       }
       return req;
     });
-
-    if (hasChanges) {
-      saveStoredRequests(list);
-    }
 
     if (user.role === 'agent') {
       return list.filter((r) => r.senderId === user.id || r.receiverId === user.id);
     }
 
     if (user.role === 'manager' || user.role === 'admin') {
-      // Manager sees team collaboration requests for KPI overview
       return list.filter((r) =>
         user.teamId ? r.senderTeamId === user.teamId || r.receiverTeamId === user.teamId : true
       );
@@ -129,10 +132,6 @@ export const collaborationService = {
     return [];
   },
 
-  /**
-   * Sends a collaboration request for a discovered match.
-   * Default expiration: 7 days.
-   */
   async sendRequest(params: {
     sender: User;
     receiverId: string;
@@ -147,9 +146,8 @@ export const collaborationService = {
     commissionSplit?: string;
     notes?: string;
   }): Promise<CollaborationRequest> {
-    const list = getStoredRequests();
+    const list = await this.getRequests(params.sender);
 
-    // Check if an active pending or accepted request already exists
     const existing = list.find(
       (r) =>
         r.senderId === params.sender.id &&
@@ -184,26 +182,48 @@ export const collaborationService = {
       commissionSplit: params.commissionSplit || '50/50',
       notes: params.notes,
       collaborationGranted: false,
-      expiresAt: getDefaultExpirationDate(7), // 7-day default expiration mandate
-      createdAt: '۱۴۰۳/۰۷/۰۴',
+      expiresAt: getDefaultExpirationDate(7),
+      createdAt: new Date().toISOString(),
     };
 
-    list.unshift(newReq);
-    saveStoredRequests(list);
+    if (isSupabaseConfigured()) {
+      try {
+        const { data } = await supabase.from('collaboration_requests').insert({
+          sender_id: newReq.senderId,
+          sender_name: newReq.senderName,
+          sender_team_id: newReq.senderTeamId,
+          sender_team_name: newReq.senderTeamName,
+          receiver_id: newReq.receiverId,
+          receiver_name: newReq.receiverName,
+          receiver_team_id: newReq.receiverTeamId,
+          property_id: newReq.propertyId,
+          property_title: newReq.propertyTitle,
+          property_district: newReq.propertyDistrict,
+          client_id: newReq.clientId,
+          client_summary: newReq.clientSummary,
+          match_score: newReq.matchScore,
+          status: newReq.status,
+          commission_split: newReq.commissionSplit,
+          notes: newReq.notes,
+          collaboration_granted: false,
+          expires_at: newReq.expiresAt,
+        }).select().single();
+        if (data) newReq.id = data.id;
 
-    // Create notification for receiver
-    const notifications = await storageService.getNotifications();
-    notifications.unshift({
-      id: `notif_collab_${Date.now()}`,
-      userId: params.receiverId,
-      title: 'درخواست همکاری جدید',
-      message: `${params.sender.fullName} درخواست همکاری برای فایل «${params.propertyTitle}» ارسال کرد.`,
-      type: 'opportunity',
-      read: false,
-      link: '/team',
-      createdAt: 'همین الان',
-    });
-    localStorage.setItem('amlakino_notifications_v2', JSON.stringify(notifications));
+        await supabase.from('notifications').insert({
+          user_id: params.receiverId,
+          title: 'درخواست همکاری جدید',
+          message: `${params.sender.fullName} درخواست همکاری برای فایل «${params.propertyTitle}» ارسال کرد.`,
+          type: 'opportunity',
+          link: '/team',
+        });
+      } catch (err: any) {
+        console.warn('Supabase collab insert error:', err.message);
+        memCollabRequests.unshift(newReq);
+      }
+    } else {
+      memCollabRequests.unshift(newReq);
+    }
 
     await auditService.logEvent({
       user: params.sender,
@@ -216,107 +236,83 @@ export const collaborationService = {
     return newReq;
   },
 
-  /**
-   * Responds to a collaboration request (Accept or Reject).
-   * Acceptance explicitly grants mutual collaboration visibility.
-   */
   async respondToRequest(
     requestId: string,
     decision: 'accept' | 'reject',
     user: User
   ): Promise<CollaborationRequest> {
-    const list = getStoredRequests();
-    const index = list.findIndex((r) => r.id === requestId);
-    if (index === -1) {
+    const list = await this.getRequests(user);
+    const req = list.find((r) => r.id === requestId);
+    if (!req) {
       throw new Error('درخواست همکاری یافت نشد.');
     }
 
-    const req = list[index];
-
-    // Authorization check
     if (req.receiverId !== user.id) {
       throw new Error('دسترسی غیرمجاز: تنها دریافت‌کننده درخواست مجاز به پاسخ‌گویی است.');
     }
 
-    // Check expiration
     if (req.status === 'expired' || new Date(req.expiresAt).getTime() <= Date.now()) {
-      req.status = 'expired';
-      saveStoredRequests(list);
       throw new Error('مهلت ۷ روزه این درخواست همکاری به پایان رسیده و منقضی شده است.');
     }
 
-    if (decision === 'accept') {
-      req.status = 'accepted';
-      req.collaborationGranted = true;
-      req.respondedAt = '۱۴۰۳/۰۷/۰۴';
+    const newStatus = decision === 'accept' ? 'accepted' : 'rejected';
+    const granted = decision === 'accept';
+    const nowIso = new Date().toISOString();
 
-      // Notify sender
-      const notifications = await storageService.getNotifications();
-      notifications.unshift({
-        id: `notif_collab_acc_${Date.now()}`,
-        userId: req.senderId,
-        title: 'درخواست همکاری پذیرفته شد!',
-        message: `${user.fullName} درخواست همکاری شما برای ملک «${req.propertyTitle}» را پذیرفت. دسترسی هماهنگی معامله فعال شد.`,
+    if (isSupabaseConfigured()) {
+      await supabase
+        .from('collaboration_requests')
+        .update({
+          status: newStatus,
+          collaboration_granted: granted,
+          responded_at: nowIso,
+        })
+        .eq('id', requestId);
+
+      await supabase.from('notifications').insert({
+        user_id: req.senderId,
+        title: decision === 'accept' ? 'درخواست همکاری پذیرفته شد!' : 'عدم پذیرش درخواست همکاری',
+        message: decision === 'accept'
+          ? `${user.fullName} درخواست همکاری شما برای ملک «${req.propertyTitle}» را پذیرفت. دسترسی هماهنگی معامله فعال شد.`
+          : `${user.fullName} درخواست همکاری برای ملک «${req.propertyTitle}» را رد کرد.`,
         type: 'opportunity',
-        read: false,
         link: '/team',
-        createdAt: 'همین الان',
-      });
-      localStorage.setItem('amlakino_notifications_v2', JSON.stringify(notifications));
-
-      await auditService.logEvent({
-        user,
-        action: 'collaboration_accepted',
-        entityType: 'collaboration',
-        entityId: req.id,
-        details: `پذیرش درخواست همکاری ارسال‌شده از طرف ${req.senderName}. مجوز هماهنگی مشترک معامله فعال گردید.`,
       });
     } else {
-      req.status = 'rejected';
-      req.collaborationGranted = false;
-      req.respondedAt = '۱۴۰۳/۰۷/۰۴';
-
-      const notifications = await storageService.getNotifications();
-      notifications.unshift({
-        id: `notif_collab_rej_${Date.now()}`,
-        userId: req.senderId,
-        title: 'عدم پذیرش درخواست همکاری',
-        message: `${user.fullName} درخواست همکاری برای ملک «${req.propertyTitle}» را رد کرد.`,
-        type: 'opportunity',
-        read: false,
-        link: '/team',
-        createdAt: 'همین الان',
-      });
-      localStorage.setItem('amlakino_notifications_v2', JSON.stringify(notifications));
+      const idx = memCollabRequests.findIndex((r) => r.id === requestId);
+      if (idx !== -1) {
+        memCollabRequests[idx] = { ...req, status: newStatus, collaborationGranted: granted, respondedAt: nowIso };
+      }
     }
 
-    list[index] = req;
-    saveStoredRequests(list);
+    req.status = newStatus;
+    req.collaborationGranted = granted;
+    req.respondedAt = nowIso;
+
+    await auditService.logEvent({
+      user,
+      action: decision === 'accept' ? 'collaboration_accepted' : 'collaboration_requested',
+      entityType: 'collaboration',
+      entityId: req.id,
+      details: decision === 'accept'
+        ? `پذیرش درخواست همکاری ارسال‌شده از طرف ${req.senderName}. مجوز هماهنگی مشترک معامله فعال گردید.`
+        : `عدم پذیرش درخواست همکاری ${req.senderName}`,
+    });
+
     return req;
   },
 
-  /**
-   * Cancel an outgoing pending request by sender
-   */
   async cancelRequest(requestId: string, user: User): Promise<void> {
-    const list = getStoredRequests();
-    const req = list.find((r) => r.id === requestId);
-    if (!req) return;
-
-    if (req.senderId !== user.id) {
-      throw new Error('تنها ارسال‌کننده مجاز به لغو درخواست است.');
+    if (isSupabaseConfigured()) {
+      await supabase.from('collaboration_requests').delete().eq('id', requestId).eq('sender_id', user.id);
+    } else {
+      const idx = memCollabRequests.findIndex((r) => r.id === requestId && r.senderId === user.id);
+      if (idx !== -1) memCollabRequests.splice(idx, 1);
     }
-
-    const filtered = list.filter((r) => r.id !== requestId);
-    saveStoredRequests(filtered);
   },
 
-  /**
-   * Checks whether mutual accepted collaboration visibility has been explicitly granted.
-   */
   hasCollaborationAccess(userAId: string, userBId: string, propertyId?: string, clientId?: string): boolean {
-    const list = getStoredRequests();
-    return list.some(
+    return memCollabRequests.some(
       (r) =>
         r.status === 'accepted' &&
         r.collaborationGranted &&
