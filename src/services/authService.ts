@@ -2,6 +2,7 @@ import { User, UserRole } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { auditService } from './auditService';
 import { otpService } from './otpService';
+import { memStore } from './storageService';
 
 export interface AuthSession {
   token: string | null;
@@ -53,7 +54,7 @@ export const authService = {
    */
   async fetchProfile(userId: string): Promise<User | null> {
     if (!isSupabaseConfigured()) {
-      return null;
+      return memStore.users.find((u) => u.id === userId) || null;
     }
 
     try {
@@ -115,10 +116,13 @@ export const authService = {
    */
   async getSession(): Promise<AuthSession> {
     if (!isSupabaseConfigured()) {
+      const savedId = typeof window !== 'undefined' ? window.localStorage?.getItem('amlakino_mock_user_id') : null;
+      const currentId = savedId || memStore.currentUserId;
+      const user = currentId ? (memStore.users.find((u) => u.id === currentId) || memStore.users[0] || null) : (memStore.users[0] || null);
       return {
-        token: null,
-        user: null,
-        isAuthenticated: false,
+        token: user ? 'mock-demo-token' : null,
+        user,
+        isAuthenticated: Boolean(user),
       };
     }
 
@@ -149,12 +153,36 @@ export const authService = {
       throw new Error('لطفاً نام کاربری/شماره موبایل و رمز عبور را وارد نمایید.');
     }
 
+    if (!isSupabaseConfigured()) {
+      const clean = normalizePersianDigits(mobileOrEmail);
+      const found = memStore.users.find(
+        (u) =>
+          normalizePersianDigits(u.mobile) === clean ||
+          (u.email && u.email.toLowerCase() === mobileOrEmail.toLowerCase().trim()) ||
+          u.fullName.includes(mobileOrEmail.trim())
+      ) || memStore.users[0];
+
+      if (!found) {
+        throw new Error('کاربری با این مشخصات یافت نشد.');
+      }
+
+      memStore.currentUserId = found.id;
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('amlakino_mock_user_id', found.id);
+      }
+
+      await auditService.logEvent({
+        user: found,
+        action: 'login',
+        entityType: 'auth',
+        details: `ورود به حساب کاربری: ${found.fullName} (${found.role})`,
+      });
+
+      return found;
+    }
+
     const isEmail = mobileOrEmail.includes('@');
     const authEmail = isEmail ? mobileOrEmail.trim() : mobileToEmail(mobileOrEmail);
-
-    if (!isSupabaseConfigured()) {
-      throw new Error('پایگاه داده Supabase هنوز پیکربندی نشده است. لطفاً در بخش تنظیمات آدرس و کلید Supabase را وارد نمایید.');
-    }
 
     const { data, error } = await supabase.auth.signInWithPassword({
       email: authEmail,
@@ -196,7 +224,35 @@ export const authService = {
     }
 
     if (!isSupabaseConfigured()) {
-      throw new Error('پایگاه داده Supabase پیکربندی نشده است. لطفاً در بخش تنظیمات اتصال به دیتابیس را فعال نمایید.');
+      const verifyRes = await otpService.verifyOtp(cleanMobile, code || '1234');
+      if (!verifyRes.success) {
+        throw new Error(verifyRes.message || 'کد تایید پیامکی نامعتبر است.');
+      }
+      let found = memStore.users.find((u) => normalizePersianDigits(u.mobile) === cleanMobile);
+      if (!found) {
+        found = {
+          id: `usr_${Date.now()}`,
+          fullName: `مشاور ${cleanMobile.slice(-4)}`,
+          mobile: cleanMobile,
+          role: 'agent' as UserRole,
+          isActive: true,
+          agentMode: 'team_member',
+          subscriptionStatus: 'active',
+          createdAt: new Date().toISOString(),
+        };
+        memStore.users.push(found);
+      }
+      memStore.currentUserId = found.id;
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('amlakino_mock_user_id', found.id);
+      }
+      await auditService.logEvent({
+        user: found,
+        action: 'login',
+        entityType: 'auth',
+        details: `ورود پیامکی کاربر: ${found.fullName}`,
+      });
+      return found;
     }
 
     if (!code) {
@@ -255,11 +311,35 @@ export const authService = {
       throw new Error('رمز عبور باید حداقل ۶ نویسه (کاراکتر) باشد.');
     }
 
-    const authEmail = params.email?.trim() || mobileToEmail(cleanMobile);
-
     if (!isSupabaseConfigured()) {
-      throw new Error('پایگاه داده Supabase پیکربندی نشده است. برای ثبت‌نام لطفاً ابتدا اتصال دیتابیس را در تنظیمات وارد فرمایید.');
+      const newUser: User = {
+        id: `usr_${Date.now()}`,
+        fullName: params.fullName,
+        mobile: cleanMobile,
+        email: params.email,
+        role: params.role,
+        teamId: params.teamId || memStore.team.id,
+        licenseCode: params.licenseCode,
+        isActive: true,
+        agentMode: 'team_member',
+        subscriptionStatus: 'active',
+        createdAt: new Date().toISOString(),
+      };
+      memStore.users.push(newUser);
+      memStore.currentUserId = newUser.id;
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.setItem('amlakino_mock_user_id', newUser.id);
+      }
+      await auditService.logEvent({
+        user: newUser,
+        action: 'login',
+        entityType: 'auth',
+        details: `ثبت‌نام رسمی کاربر جدید: ${newUser.fullName} (${newUser.role})`,
+      });
+      return newUser;
     }
+
+    const authEmail = params.email?.trim() || mobileToEmail(cleanMobile);
 
     const { data, error } = await supabase.auth.signUp({
       email: authEmail,
@@ -325,38 +405,56 @@ export const authService = {
 
   /**
    * Switch account for demo/evaluation
-   * Prohibited when live Supabase session management is in effect.
    */
-  async switchDemoUser(_userId: string): Promise<User> {
+  async switchDemoUser(userId: string): Promise<User> {
     if (isSupabaseConfigured()) {
       throw new Error('امکان تغییر کاربر دمو در حالت اتصال به سرور Supabase وجود ندارد. نشست فعال Supabase تنها منبع هویت است.');
     }
-    throw new Error('سامانه در حالت اتصال پایگاه داده واقعی قرار دارد. لطفاً با رمز عبور یا پیامک وارد شوید.');
+    const target = memStore.users.find((u) => u.id === userId);
+    if (!target) {
+      throw new Error('کاربر مورد نظر یافت نشد.');
+    }
+    memStore.currentUserId = target.id;
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem('amlakino_mock_user_id', target.id);
+    }
+    await auditService.logEvent({
+      user: target,
+      action: 'login',
+      entityType: 'auth',
+      details: `تغییر کاربر فعال به: ${target.fullName} (${target.role})`,
+    });
+    return target;
   },
 
   /**
    * Supabase Sign Out
    */
   async logout(): Promise<void> {
-    if (isSupabaseConfigured()) {
-      try {
-        const { data } = await supabase.auth.getSession();
-        if (data?.session?.user) {
-          const profile = await this.fetchProfile(data.session.user.id);
-          if (profile) {
-            await auditService.logEvent({
-              user: profile,
-              action: 'logout',
-              entityType: 'auth',
-              details: 'خروج امن از حساب کاربری',
-            });
-          }
-        }
-      } catch (e) {
-        console.warn('Logout audit event skipped:', e);
+    if (!isSupabaseConfigured()) {
+      memStore.currentUserId = null;
+      if (typeof window !== 'undefined' && window.localStorage) {
+        window.localStorage.removeItem('amlakino_mock_user_id');
       }
-      await supabase.auth.signOut();
+      return;
     }
+    try {
+      const { data } = await supabase.auth.getSession();
+      if (data?.session?.user) {
+        const profile = await this.fetchProfile(data.session.user.id);
+        if (profile) {
+          await auditService.logEvent({
+            user: profile,
+            action: 'logout',
+            entityType: 'auth',
+            details: 'خروج امن از حساب کاربری',
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('Logout audit event skipped:', e);
+    }
+    await supabase.auth.signOut();
   },
 
   /**

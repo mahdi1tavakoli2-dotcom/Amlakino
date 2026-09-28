@@ -2,7 +2,7 @@ import { Team, TeamMembership, Invitation, User } from '../types';
 import { storageService } from './storageService';
 
 export const teamService = {
-  async getTeam(): Promise<Team> {
+  async getTeam(): Promise<Team | null> {
     return storageService.getTeam();
   },
 

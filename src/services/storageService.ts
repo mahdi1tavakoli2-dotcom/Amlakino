@@ -158,27 +158,35 @@ export const storageService = {
     if (!isSupabaseConfigured()) {
       return memStore.users;
     }
-    const { data, error } = await supabase.from('profiles').select('*');
-    if (error) {
-      console.error('Supabase getUsers error:', error.message);
-      throw new Error(`خطا در واکشی کاربران: ${error.message}`);
+    try {
+      const { data, error } = await supabase.from('profiles').select('*');
+      if (error) {
+        console.warn('Supabase getUsers notice:', error.message);
+        return memStore.users;
+      }
+      if (!data || data.length === 0) {
+        return memStore.users;
+      }
+      return data.map((u) => ({
+        id: u.id,
+        fullName: u.full_name,
+        mobile: u.mobile,
+        email: u.email || undefined,
+        role: u.role,
+        teamId: u.team_id || undefined,
+        avatarUrl: u.avatar_url || undefined,
+        licenseCode: u.license_code || undefined,
+        isActive: u.is_active ?? true,
+        agentMode: u.agent_mode || 'team_member',
+        subscriptionStatus: u.subscription_status || 'none',
+        exitDate: u.exit_date || undefined,
+        gracePeriodEndsAt: u.grace_period_ends_at || undefined,
+        createdAt: u.created_at,
+      }));
+    } catch (e: any) {
+      console.warn('Supabase getUsers fallback:', e?.message);
+      return memStore.users;
     }
-    return (data || []).map((u) => ({
-      id: u.id,
-      fullName: u.full_name,
-      mobile: u.mobile,
-      email: u.email || undefined,
-      role: u.role,
-      teamId: u.team_id || undefined,
-      avatarUrl: u.avatar_url || undefined,
-      licenseCode: u.license_code || undefined,
-      isActive: u.is_active ?? true,
-      agentMode: u.agent_mode || 'team_member',
-      subscriptionStatus: u.subscription_status || 'none',
-      exitDate: u.exit_date || undefined,
-      gracePeriodEndsAt: u.grace_period_ends_at || undefined,
-      createdAt: u.created_at,
-    }));
   },
 
   async getUserById(id: string): Promise<User | null> {
@@ -247,17 +255,31 @@ export const storageService = {
   // -------------------------------------------------------------
   // Teams & Memberships
   // -------------------------------------------------------------
-  async getTeam(): Promise<Team> {
-    if (!isSupabaseConfigured()) {
-      return memStore.team;
+  async getTeam(currentUser?: User | null): Promise<Team | null> {
+    const user = currentUser !== undefined ? currentUser : await this.getCurrentUser();
+    if (!user || !user.teamId) {
+      return null;
     }
-    const { data, error } = await supabase.from('teams').select('*').limit(1).maybeSingle();
+
+    if (!isSupabaseConfigured()) {
+      if (memStore.team && memStore.team.id === user.teamId) {
+        return memStore.team;
+      }
+      return null;
+    }
+
+    const { data, error } = await supabase
+      .from('teams')
+      .select('*')
+      .eq('id', user.teamId)
+      .maybeSingle();
+
     if (error) {
       console.error('Supabase getTeam error:', error.message);
       throw new Error(`خطا در دریافت اطلاعات تیم: ${error.message}`);
     }
     if (!data) {
-      return memStore.team;
+      return null;
     }
     return {
       id: data.id,
@@ -272,8 +294,15 @@ export const storageService = {
     };
   },
 
-  async updateTeam(updates: Partial<Team>): Promise<Team> {
-    const current = await this.getTeam();
+  async updateTeam(updates: Partial<Team>, currentUser?: User | null): Promise<Team> {
+    const user = currentUser !== undefined ? currentUser : await this.getCurrentUser();
+    if (!user || !authzService.isManager(user)) {
+      throw new Error('فقط مدیر دپارتمان مجاز به ویرایش مشخصات آژانس است.');
+    }
+    const current = await this.getTeam(user);
+    if (!current) {
+      throw new Error('تیم مشخصی برای این کاربر یافت نشد.');
+    }
     const updated: Team = { ...current, ...updates, id: current.id };
 
     if (!isSupabaseConfigured()) {
@@ -289,7 +318,7 @@ export const storageService = {
       phone: updated.phone,
       logo_url: updated.logoUrl,
       updated_at: new Date().toISOString(),
-    }).eq('id', updated.id);
+    }).eq('id', current.id);
 
     if (error) {
       console.error('Supabase updateTeam error:', error.message);
@@ -298,14 +327,21 @@ export const storageService = {
     return updated;
   },
 
-  async getTeamMemberships(teamId?: string): Promise<TeamMembership[]> {
-    if (!isSupabaseConfigured()) {
-      if (teamId) return memStore.teamMemberships.filter((m) => m.teamId === teamId && m.status === 'active');
-      return memStore.teamMemberships;
+  async getTeamMemberships(teamId?: string, currentUser?: User | null): Promise<TeamMembership[]> {
+    const user = currentUser !== undefined ? currentUser : await this.getCurrentUser();
+    const targetTeamId = teamId || user?.teamId;
+    if (!targetTeamId) {
+      return [];
     }
-    let q = supabase.from('team_memberships').select('*');
-    if (teamId) q = q.eq('team_id', teamId).eq('status', 'active');
-    const { data, error } = await q;
+
+    if (!isSupabaseConfigured()) {
+      return memStore.teamMemberships.filter((m) => m.teamId === targetTeamId && m.status === 'active');
+    }
+    const { data, error } = await supabase
+      .from('team_memberships')
+      .select('*')
+      .eq('team_id', targetTeamId)
+      .eq('status', 'active');
     if (error) {
       console.error('Supabase getTeamMemberships error:', error.message);
       throw new Error(`خطا در دریافت لیست اعضای تیم: ${error.message}`);
@@ -535,7 +571,7 @@ export const storageService = {
     const newInv: Invitation = {
       id: 'inv_' + Date.now(),
       teamId: data.teamId,
-      teamName: team.name,
+      teamName: team?.name || 'دپارتمان املاک',
       inviterId: data.managerUser.id,
       inviterName: data.managerUser.fullName,
       inviteeMobile: data.inviteeMobile,
@@ -645,24 +681,24 @@ export const storageService = {
       rawProps = memStore.properties;
     }
 
-    // Role & Privacy filtering
+    // Role & Privacy filtering with strict tenant isolation
     if (user.role === 'agent') {
       return rawProps
         .filter(
           (p) =>
             p.ownerId === user.id ||
-            (p.privacyState === 'shared' && user.teamId && p.teamId === user.teamId)
+            (p.privacyState === 'shared' && Boolean(user.teamId) && p.teamId === user.teamId)
         )
         .map((p) => authzService.sanitizeProperty(user, p));
     }
 
     if (user.role === 'manager' || user.role === 'admin') {
       return rawProps
-        .filter((p) => (user.teamId ? p.teamId === user.teamId : true))
+        .filter((p) => (user.teamId ? p.teamId === user.teamId || p.ownerId === user.id : p.ownerId === user.id))
         .map((p) => authzService.sanitizeProperty(user, p));
     }
 
-    return [];
+    return rawProps.filter((p) => p.ownerId === user.id).map((p) => authzService.sanitizeProperty(user, p));
   },
 
   async getPropertyById(id: string, currentUser?: User | null): Promise<Property | null> {
@@ -704,7 +740,7 @@ export const storageService = {
 
     const newProp: Property = {
       ...propertyData,
-      id: `prop_${Date.now()}`,
+      id: `prop_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       code,
       transactionType: propertyData.transactionType || propertyData.dealType,
       neighborhood: propertyData.neighborhood || propertyData.district,
@@ -921,18 +957,18 @@ export const storageService = {
         .filter(
           (c) =>
             c.ownerId === user.id ||
-            (c.privacyState === 'shared' && user.teamId && c.teamId === user.teamId)
+            (c.privacyState === 'shared' && Boolean(user.teamId) && c.teamId === user.teamId)
         )
         .map((c) => authzService.sanitizeClient(user, c));
     }
 
     if (user.role === 'manager' || user.role === 'admin') {
       return rawClients
-        .filter((c) => (user.teamId ? c.teamId === user.teamId : true))
+        .filter((c) => (user.teamId ? c.teamId === user.teamId || c.ownerId === user.id : c.ownerId === user.id))
         .map((c) => authzService.sanitizeClient(user, c));
     }
 
-    return [];
+    return rawClients.filter((c) => c.ownerId === user.id).map((c) => authzService.sanitizeClient(user, c));
   },
 
   async getClientById(id: string, currentUser?: User | null): Promise<Client | null> {
@@ -972,7 +1008,7 @@ export const storageService = {
     const nowIso = new Date().toISOString();
     const newClient: Client = {
       ...clientData,
-      id: `cli_${Date.now()}`,
+      id: `cli_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       name: clientData.name || clientData.fullName,
       phone: clientData.phone || clientData.mobile,
       fullName: clientData.fullName || clientData.name || '',
@@ -1187,7 +1223,12 @@ export const storageService = {
     if (user.role === 'agent') {
       return raw.filter((f) => f.ownerId === user.id).map((f) => authzService.sanitizeFollowUp(user, f));
     }
-    return raw.map((f) => authzService.sanitizeFollowUp(user, f));
+    if (user.role === 'manager' || user.role === 'admin') {
+      return raw
+        .filter((f) => (user.teamId ? f.ownerId === user.id || f.agentId === user.id : f.ownerId === user.id))
+        .map((f) => authzService.sanitizeFollowUp(user, f));
+    }
+    return raw.filter((f) => f.ownerId === user.id).map((f) => authzService.sanitizeFollowUp(user, f));
   },
 
   async createFollowUp(
@@ -1199,7 +1240,7 @@ export const storageService = {
 
     const newFollowUp: FollowUp = {
       ...followUpData,
-      id: `flw_${Date.now()}`,
+      id: `flw_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       ownerId: user.id,
       privacyState: 'private',
       agentId: user.id,
@@ -1304,9 +1345,12 @@ export const storageService = {
     }
 
     if (user.role === 'agent') {
-      return raw.filter((o) => o.ownerId === user.id || o.privacyState === 'shared');
+      return raw.filter((o) => o.ownerId === user.id || (o.privacyState === 'shared' && Boolean(user.teamId)));
     }
-    return raw;
+    if (user.role === 'manager' || user.role === 'admin') {
+      return raw.filter((o) => (user.teamId ? Boolean(user.teamId) : o.ownerId === user.id));
+    }
+    return raw.filter((o) => o.ownerId === user.id);
   },
 
   async getMatches(): Promise<Match[]> {
@@ -1370,9 +1414,14 @@ export const storageService = {
     }
 
     if (user.role === 'agent') {
-      return raw.filter((v) => v.ownerId === user.id).map((v) => authzService.sanitizeVisit(user, v));
+      return raw.filter((v) => v.ownerId === user.id || v.agentId === user.id).map((v) => authzService.sanitizeVisit(user, v));
     }
-    return raw.map((v) => authzService.sanitizeVisit(user, v));
+    if (user.role === 'manager' || user.role === 'admin') {
+      return raw
+        .filter((v) => (user.teamId ? Boolean(user.teamId) : v.ownerId === user.id))
+        .map((v) => authzService.sanitizeVisit(user, v));
+    }
+    return raw.filter((v) => v.ownerId === user.id).map((v) => authzService.sanitizeVisit(user, v));
   },
 
   async getNotifications(currentUser?: User | null): Promise<Notification[]> {

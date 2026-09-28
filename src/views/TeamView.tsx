@@ -78,7 +78,7 @@ export const TeamView: React.FC = () => {
         storageService.getInvitations(),
       ]);
       setTeam(t);
-      const teamMems = allUsers.filter((u) => u.teamId === t.id);
+      const teamMems = t ? allUsers.filter((u) => u.teamId === t.id) : [];
       setMembers(teamMems);
       setInvitations(invs);
     } catch (e) {

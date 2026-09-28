@@ -53,6 +53,23 @@ const AppContent: React.FC = () => {
   if (path === '/register') {
     return <RegisterView />;
   }
+  if (path === '/settings' && !isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex flex-col antialiased text-slate-900">
+        <Header
+          title="تنظیمات سامانه و اتصال دیتابیس"
+          showBack={true}
+          onBack={() => navigate('/login')}
+          onNavigate={navigate}
+          unreadNotificationsCount={0}
+          user={null}
+        />
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-y-auto max-w-4xl mx-auto w-full">
+          <SettingsView />
+        </main>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

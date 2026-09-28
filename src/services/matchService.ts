@@ -197,6 +197,7 @@ export const matchService = {
 
     const matches: Match[] = [];
     const pDeal = property.transactionType || property.dealType;
+    const effectiveUser = currentUser || null;
 
     for (const client of clients) {
       if (client.status === 'archived') continue;
@@ -207,18 +208,28 @@ export const matchService = {
 
       const calc = this.calculateMatch(property, client);
       if (calc.score >= minScore) {
+        const isTeamMatch = property.ownerId !== client.ownerId;
+        const hasCollab = isTeamMatch
+          ? collaborationService.hasCollaborationAccess(property.ownerId, client.ownerId, property.id, client.id)
+          : true;
+
+        const sanitizedProp = authzService.sanitizeProperty(effectiveUser, property, hasCollab);
+        const sanitizedCli = authzService.sanitizeClient(effectiveUser, client, hasCollab);
+
         matches.push({
           id: `match_${property.id}_${client.id}`,
           propertyId: property.id,
-          property,
+          property: sanitizedProp,
           clientId: client.id,
-          client,
+          client: sanitizedCli,
           matchScore: calc.score,
           matchedFactors: calc.factors,
           unmatchedFactors: calc.unmatched,
           weakFactors: calc.unmatched,
           criteriaBreakdown: calc.criteriaBreakdown,
           status: 'new',
+          isTeamMatch,
+          collaborationGranted: hasCollab,
           createdAt: 'امروز',
         });
       }
@@ -244,6 +255,7 @@ export const matchService = {
 
     const matches: Match[] = [];
     const cDeal = client.transactionType || client.desiredDealType;
+    const effectiveUser = currentUser || null;
 
     for (const property of properties) {
       if (
@@ -260,18 +272,28 @@ export const matchService = {
 
       const calc = this.calculateMatch(property, client);
       if (calc.score >= minScore) {
+        const isTeamMatch = property.ownerId !== client.ownerId;
+        const hasCollab = isTeamMatch
+          ? collaborationService.hasCollaborationAccess(property.ownerId, client.ownerId, property.id, client.id)
+          : true;
+
+        const sanitizedProp = authzService.sanitizeProperty(effectiveUser, property, hasCollab);
+        const sanitizedCli = authzService.sanitizeClient(effectiveUser, client, hasCollab);
+
         matches.push({
           id: `match_${property.id}_${client.id}`,
           propertyId: property.id,
-          property,
+          property: sanitizedProp,
           clientId: client.id,
-          client,
+          client: sanitizedCli,
           matchScore: calc.score,
           matchedFactors: calc.factors,
           unmatchedFactors: calc.unmatched,
           weakFactors: calc.unmatched,
           criteriaBreakdown: calc.criteriaBreakdown,
           status: 'new',
+          isTeamMatch,
+          collaborationGranted: hasCollab,
           createdAt: 'امروز',
         });
       }

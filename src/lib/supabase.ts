@@ -15,6 +15,32 @@ const getRawEnv = (key: string): string => {
   return '';
 };
 
+export function sanitizeSupabaseUrl(raw?: string | null): string {
+  if (!raw) return '';
+  let url = raw.trim().replace(/^["']|["']$/g, '');
+  if (!url) return '';
+  if (!url.includes('://')) {
+    if (url.endsWith('.supabase.co')) {
+      url = `https://${url}`;
+    } else if (/^[a-z0-9_-]{10,}$/i.test(url)) {
+      url = `https://${url}.supabase.co`;
+    } else {
+      url = `https://${url}`;
+    }
+  }
+  // Strip trailing slashes and subpaths like /rest/v1 or /auth/v1
+  url = url.replace(/\/+$/, '');
+  url = url.replace(/\/rest\/v1\/?$/i, '');
+  url = url.replace(/\/auth\/v1\/?$/i, '');
+  url = url.replace(/\/+$/, '');
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Detects whether a secret key (sb_secret_...) or publishable key was inadvertently
  * configured in place of the Supabase project HTTP URL.
@@ -32,11 +58,15 @@ export function isSecretKeyMistakenForUrl(val?: string | null): boolean {
 export function getResolvedSupabaseUrl(): string {
   if (typeof window !== 'undefined' && window.localStorage) {
     const saved = window.localStorage.getItem('amlakino_supabase_url');
-    if (saved && saved.startsWith('https://')) return saved.trim();
+    if (saved) {
+      const sanitized = sanitizeSupabaseUrl(saved);
+      if (sanitized.startsWith('https://')) return sanitized;
+    }
   }
   const envUrl = getRawEnv('VITE_SUPABASE_URL');
-  if (envUrl && envUrl.startsWith('https://')) {
-    return envUrl.trim();
+  if (envUrl) {
+    const sanitized = sanitizeSupabaseUrl(envUrl);
+    if (sanitized.startsWith('https://')) return sanitized;
   }
   return '';
 }

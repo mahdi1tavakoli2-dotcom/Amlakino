@@ -535,14 +535,13 @@ CREATE POLICY "Team members can view team" ON public.teams
     FOR SELECT USING (
         id = public.get_current_team_id()
         OR manager_id = auth.uid()
-        OR auth.role() = 'authenticated'
     );
 
 DROP POLICY IF EXISTS "Managers can create team" ON public.teams;
 CREATE POLICY "Managers can create team" ON public.teams
     FOR INSERT WITH CHECK (
         manager_id = auth.uid()
-        OR auth.role() = 'authenticated'
+        AND public.is_manager()
     );
 
 DROP POLICY IF EXISTS "Managers can update team" ON public.teams;
@@ -556,6 +555,7 @@ DROP POLICY IF EXISTS "Managers can delete team" ON public.teams;
 CREATE POLICY "Managers can delete team" ON public.teams
     FOR DELETE USING (
         manager_id = auth.uid()
+        AND public.is_manager()
     );
 
 -- --------------------------------------------------------------------
@@ -630,15 +630,27 @@ CREATE POLICY "Agents can view own properties or shared in team" ON public.prope
 
 DROP POLICY IF EXISTS "Only property owner can insert property" ON public.properties;
 CREATE POLICY "Only property owner can insert property" ON public.properties
-    FOR INSERT WITH CHECK (owner_id = auth.uid());
+    FOR INSERT WITH CHECK (
+        owner_id = auth.uid()
+        AND (team_id IS NULL OR team_id = public.get_current_team_id())
+    );
 
 DROP POLICY IF EXISTS "Only property owner can update property" ON public.properties;
 CREATE POLICY "Only property owner can update property" ON public.properties
-    FOR UPDATE USING (owner_id = auth.uid());
+    FOR UPDATE USING (
+        owner_id = auth.uid()
+        OR (public.is_manager() AND team_id = public.get_current_team_id() AND team_id IS NOT NULL)
+    ) WITH CHECK (
+        owner_id = auth.uid()
+        AND (team_id IS NULL OR team_id = public.get_current_team_id())
+    );
 
 DROP POLICY IF EXISTS "Only property owner can delete property" ON public.properties;
 CREATE POLICY "Only property owner can delete property" ON public.properties
-    FOR DELETE USING (owner_id = auth.uid());
+    FOR DELETE USING (
+        owner_id = auth.uid()
+        OR (public.is_manager() AND team_id = public.get_current_team_id() AND team_id IS NOT NULL)
+    );
 
 -- --------------------------------------------------------------------
 -- F. CLIENTS POLICIES
@@ -653,15 +665,27 @@ CREATE POLICY "Agents can view own clients or shared in team" ON public.clients
 
 DROP POLICY IF EXISTS "Only client owner can insert client" ON public.clients;
 CREATE POLICY "Only client owner can insert client" ON public.clients
-    FOR INSERT WITH CHECK (owner_id = auth.uid());
+    FOR INSERT WITH CHECK (
+        owner_id = auth.uid()
+        AND (team_id IS NULL OR team_id = public.get_current_team_id())
+    );
 
 DROP POLICY IF EXISTS "Only client owner can update client" ON public.clients;
 CREATE POLICY "Only client owner can update client" ON public.clients
-    FOR UPDATE USING (owner_id = auth.uid());
+    FOR UPDATE USING (
+        owner_id = auth.uid()
+        OR (public.is_manager() AND team_id = public.get_current_team_id() AND team_id IS NOT NULL)
+    ) WITH CHECK (
+        owner_id = auth.uid()
+        AND (team_id IS NULL OR team_id = public.get_current_team_id())
+    );
 
 DROP POLICY IF EXISTS "Only client owner can delete client" ON public.clients;
 CREATE POLICY "Only client owner can delete client" ON public.clients
-    FOR DELETE USING (owner_id = auth.uid());
+    FOR DELETE USING (
+        owner_id = auth.uid()
+        OR (public.is_manager() AND team_id = public.get_current_team_id() AND team_id IS NOT NULL)
+    );
 
 -- --------------------------------------------------------------------
 -- G. OPPORTUNITIES POLICIES (Tenant Isolated)
@@ -750,44 +774,75 @@ CREATE POLICY "Delete deals" ON public.deals
 -- K. MATCHES POLICIES (Secure Multi-Tenant Matching Privacy)
 -- --------------------------------------------------------------------
 DROP POLICY IF EXISTS "View matches" ON public.matches;
+DROP POLICY IF EXISTS "Insert matches" ON public.matches;
+DROP POLICY IF EXISTS "Update matches" ON public.matches;
+DROP POLICY IF EXISTS "Delete matches" ON public.matches;
 DROP POLICY IF EXISTS "Manage matches" ON public.matches;
 
 CREATE POLICY "View matches" ON public.matches
     FOR SELECT USING (
-        -- Match is strictly visible only to agents involved in the deal (property owner or client owner)
-        property_id IN (SELECT id FROM public.properties WHERE owner_id = auth.uid())
-        OR client_id IN (SELECT id FROM public.clients WHERE owner_id = auth.uid())
-        -- Or manager of the department if items belong to their team
-        OR (public.is_manager() AND (
-            property_id IN (SELECT id FROM public.properties WHERE team_id = public.get_current_team_id() AND team_id IS NOT NULL)
-            OR client_id IN (SELECT id FROM public.clients WHERE team_id = public.get_current_team_id() AND team_id IS NOT NULL)
-        ))
+        EXISTS (
+            SELECT 1 FROM public.properties p, public.clients c
+            WHERE p.id = matches.property_id AND c.id = matches.client_id
+            AND (
+                p.owner_id = auth.uid()
+                OR (p.privacy_state = 'shared' AND p.team_id = public.get_current_team_id() AND p.team_id IS NOT NULL)
+                OR (public.is_manager() AND p.team_id = public.get_current_team_id() AND p.team_id IS NOT NULL)
+            )
+            AND (
+                c.owner_id = auth.uid()
+                OR (c.privacy_state = 'shared' AND c.team_id = public.get_current_team_id() AND c.team_id IS NOT NULL)
+                OR (public.is_manager() AND c.team_id = public.get_current_team_id() AND c.team_id IS NOT NULL)
+            )
+        )
     );
 
 CREATE POLICY "Insert matches" ON public.matches
     FOR INSERT WITH CHECK (
-        property_id IN (SELECT id FROM public.properties WHERE owner_id = auth.uid() OR (privacy_state = 'shared' AND team_id = public.get_current_team_id() AND team_id IS NOT NULL))
-        OR client_id IN (SELECT id FROM public.clients WHERE owner_id = auth.uid() OR (privacy_state = 'shared' AND team_id = public.get_current_team_id() AND team_id IS NOT NULL))
+        EXISTS (
+            SELECT 1 FROM public.properties p, public.clients c
+            WHERE p.id = matches.property_id AND c.id = matches.client_id
+            AND (
+                p.owner_id = auth.uid()
+                OR (p.privacy_state = 'shared' AND p.team_id = public.get_current_team_id() AND p.team_id IS NOT NULL)
+                OR (public.is_manager() AND p.team_id = public.get_current_team_id() AND p.team_id IS NOT NULL)
+            )
+            AND (
+                c.owner_id = auth.uid()
+                OR (c.privacy_state = 'shared' AND c.team_id = public.get_current_team_id() AND c.team_id IS NOT NULL)
+                OR (public.is_manager() AND c.team_id = public.get_current_team_id() AND c.team_id IS NOT NULL)
+            )
+            AND (
+                (p.team_id IS NOT NULL AND p.team_id = c.team_id AND p.team_id = public.get_current_team_id())
+                OR (p.owner_id = auth.uid() AND c.owner_id = auth.uid())
+            )
+        )
     );
 
 CREATE POLICY "Update matches" ON public.matches
     FOR UPDATE USING (
-        property_id IN (SELECT id FROM public.properties WHERE owner_id = auth.uid())
-        OR client_id IN (SELECT id FROM public.clients WHERE owner_id = auth.uid())
-        OR (public.is_manager() AND (
-            property_id IN (SELECT id FROM public.properties WHERE team_id = public.get_current_team_id() AND team_id IS NOT NULL)
-            OR client_id IN (SELECT id FROM public.clients WHERE team_id = public.get_current_team_id() AND team_id IS NOT NULL)
-        ))
+        EXISTS (
+            SELECT 1 FROM public.properties p, public.clients c
+            WHERE p.id = matches.property_id AND c.id = matches.client_id
+            AND (
+                p.owner_id = auth.uid()
+                OR c.owner_id = auth.uid()
+                OR (public.is_manager() AND p.team_id = public.get_current_team_id() AND c.team_id = public.get_current_team_id() AND p.team_id IS NOT NULL)
+            )
+        )
     );
 
 CREATE POLICY "Delete matches" ON public.matches
     FOR DELETE USING (
-        property_id IN (SELECT id FROM public.properties WHERE owner_id = auth.uid())
-        OR client_id IN (SELECT id FROM public.clients WHERE owner_id = auth.uid())
-        OR (public.is_manager() AND (
-            property_id IN (SELECT id FROM public.properties WHERE team_id = public.get_current_team_id() AND team_id IS NOT NULL)
-            OR client_id IN (SELECT id FROM public.clients WHERE team_id = public.get_current_team_id() AND team_id IS NOT NULL)
-        ))
+        EXISTS (
+            SELECT 1 FROM public.properties p, public.clients c
+            WHERE p.id = matches.property_id AND c.id = matches.client_id
+            AND (
+                p.owner_id = auth.uid()
+                OR c.owner_id = auth.uid()
+                OR (public.is_manager() AND p.team_id = public.get_current_team_id() AND c.team_id = public.get_current_team_id() AND p.team_id IS NOT NULL)
+            )
+        )
     );
 
 -- --------------------------------------------------------------------

@@ -24,8 +24,8 @@ export const RegisterView: React.FC = () => {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fullName || !mobile || !password) {
-      toast.error('لطفاً تمامی فیلدهای الزامی را تکمیل فرمایید.');
+    if (!fullName || !email || !password) {
+      toast.error('لطفاً نام، ایمیل و رمز عبور را تکمیل فرمایید.');
       return;
     }
     if (password.length < 6) {
@@ -117,11 +117,12 @@ export const RegisterView: React.FC = () => {
             />
 
             <Input
-              label="ایمیل (اختیاری)"
+              label="ایمیل (شناسه ورود)"
               type="email"
               placeholder="name@agency.ir"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              required
             />
 
             <Input
