@@ -36,7 +36,7 @@ const defaultEmptyTeam: Team = {
 };
 
 // In-Memory store (starts completely empty, strictly NO mock/sample data)
-const memStore = {
+export const memStore = {
   users: [] as User[],
   team: defaultEmptyTeam,
   teamMemberships: [] as TeamMembership[],
