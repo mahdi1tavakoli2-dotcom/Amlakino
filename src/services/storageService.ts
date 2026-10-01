@@ -761,6 +761,26 @@ export const storageService = {
     };
 
     if (isSupabaseConfigured()) {
+      // 1. Authoritative resolution of authenticated user ID (auth.uid equivalent)
+      const { data: authData } = await supabase.auth.getUser();
+      const authUid = authData?.user?.id || user.id;
+
+      // 2. Authoritative resolution of team_id and profile data from profiles table
+      let authoritativeTeamId: string | null = null;
+      let authoritativeAgentName = user.fullName;
+      const { data: profileRow } = await supabase
+        .from('profiles')
+        .select('team_id, full_name')
+        .eq('id', authUid)
+        .maybeSingle();
+
+      if (profileRow) {
+        authoritativeTeamId = profileRow.team_id || null;
+        if (profileRow.full_name) {
+          authoritativeAgentName = profileRow.full_name;
+        }
+      }
+
       const { data, error } = await supabase.from('properties').insert({
         code: newProp.code,
         title: newProp.title,
@@ -791,11 +811,11 @@ export const storageService = {
         owner_phone: newProp.ownerPhone,
         status: newProp.status,
         availability_status: newProp.availabilityStatus,
-        owner_id: user.id,
+        owner_id: authUid,
         privacy_state: newProp.privacyState,
-        agent_id: user.id,
-        agent_name: user.fullName,
-        team_id: user.teamId || null,
+        agent_id: authUid,
+        agent_name: authoritativeAgentName,
+        team_id: authoritativeTeamId,
         notes: newProp.notes,
       }).select().single();
 
@@ -803,7 +823,13 @@ export const storageService = {
         console.error('Supabase property insert error:', error.message);
         throw new Error(`خطا در ثبت فایل در سرور: ${error.message}`);
       }
-      if (data) newProp.id = data.id;
+      if (data) {
+        newProp.id = data.id;
+        newProp.ownerId = authUid;
+        newProp.agentId = authUid;
+        newProp.agentName = authoritativeAgentName;
+        newProp.teamId = authoritativeTeamId || undefined;
+      }
     } else {
       memStore.properties.unshift(newProp);
     }
@@ -1038,6 +1064,26 @@ export const storageService = {
     };
 
     if (isSupabaseConfigured()) {
+      // 1. Authoritative resolution of authenticated user ID (auth.uid equivalent)
+      const { data: authData } = await supabase.auth.getUser();
+      const authUid = authData?.user?.id || user.id;
+
+      // 2. Authoritative resolution of team_id and profile data from profiles table
+      let authoritativeTeamId: string | null = null;
+      let authoritativeAgentName = user.fullName;
+      const { data: profileRow } = await supabase
+        .from('profiles')
+        .select('team_id, full_name')
+        .eq('id', authUid)
+        .maybeSingle();
+
+      if (profileRow) {
+        authoritativeTeamId = profileRow.team_id || null;
+        if (profileRow.full_name) {
+          authoritativeAgentName = profileRow.full_name;
+        }
+      }
+
       const { data, error } = await supabase.from('clients').insert({
         full_name: newClient.fullName,
         mobile: newClient.mobile,
@@ -1060,18 +1106,24 @@ export const storageService = {
         requirements: newClient.requirements,
         urgency: newClient.urgency,
         notes: newClient.notes,
-        owner_id: user.id,
+        owner_id: authUid,
         privacy_state: newClient.privacyState,
-        agent_id: user.id,
-        agent_name: user.fullName,
-        team_id: user.teamId || null,
+        agent_id: authUid,
+        agent_name: authoritativeAgentName,
+        team_id: authoritativeTeamId,
       }).select().single();
 
       if (error) {
         console.error('Supabase client insert error:', error.message);
         throw new Error(`خطا در ثبت پرونده متقاضی در سرور: ${error.message}`);
       }
-      if (data) newClient.id = data.id;
+      if (data) {
+        newClient.id = data.id;
+        newClient.ownerId = authUid;
+        newClient.agentId = authUid;
+        newClient.agentName = authoritativeAgentName;
+        newClient.teamId = authoritativeTeamId || undefined;
+      }
     } else {
       memStore.clients.unshift(newClient);
     }
